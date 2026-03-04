@@ -63,17 +63,23 @@ def collate(batch):
 
 
 def encode_images_fast(vlm_wrapper, image_paths, batch_size=64, num_workers=8, device="cuda"):
+    import sys
+    # MPS + multiprocessing workers causes a segfault on macOS during teardown
+    if device == "mps" or sys.platform == "darwin":
+        num_workers = 0
+
     ds = ImagePathDataset(image_paths)
-    loader = DataLoader(
-        ds,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=num_workers,
-        pin_memory=True,
-        persistent_workers=True,
-        prefetch_factor=2,
-        collate_fn=collate,
-    )
+    dataloader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": False,
+        "num_workers": num_workers,
+        "pin_memory": device == "cuda",
+        "collate_fn": collate,
+    }
+    if num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
+    loader = DataLoader(ds, **dataloader_kwargs)
     features, paths_out = [], []
     vlm_wrapper.model.eval()
     with torch.no_grad():
@@ -86,7 +92,12 @@ def encode_images_fast(vlm_wrapper, image_paths, batch_size=64, num_workers=8, d
 
 
 def create_faiss_index(features, feature_dim, index_type='flat_ip', m=32):
-    faiss.normalize_L2(features)
+    features = np.ascontiguousarray(features.astype(np.float32))
+    # Avoid faiss.normalize_L2: it uses OpenMP which conflicts with PyTorch's
+    # bundled libomp on Apple Silicon, causing a segfault.
+    norms = np.linalg.norm(features, axis=1, keepdims=True)
+    norms = np.where(norms == 0, 1.0, norms)
+    features /= norms
 
     if index_type == 'flat_ip':
         index = faiss.IndexFlatIP(feature_dim)
@@ -123,6 +134,15 @@ def main():
         num_workers=args.num_workers,
         device=args.device,
     )
+
+    # Explicitly release model from MPS/GPU memory before FAISS operations.
+    # On Apple Silicon, holding MPS tensors during process exit causes a segfault.
+    del model, wrapper, processor
+    import gc
+    gc.collect()
+    if hasattr(torch, 'mps') and torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
     feature_dim = features.shape[1]
 
     # Create FAISS index

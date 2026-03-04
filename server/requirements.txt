@@ -18,5 +18,6 @@ accelerate==1.3.0
 torchmetrics==1.6.1
 pydantic-settings==2.11.0
 pytorch-lightning==2.5.0.post0
+psutil
 pytest
 ultralytics==8.3.76
