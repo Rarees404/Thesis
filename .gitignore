@@ -175,11 +175,29 @@ cython_debug/
 .pypirc
 
 
-data/*
-checkpoints/*
-faiss/*
-logs/*
-results/*
+# Large data files — must be generated locally, not stored in git
+data/
+checkpoints/
+faiss/
+**/faiss/**
+logs/
+results/
 
+# Model weights and indexes
+*.faiss
+*.bin
+*.pth
+*.pt
+*.safetensors
+*.ckpt
+*.pkl
+*.npy
+*.npz
+
+# Dataset images (already in data/)
 *.jpg
 *.jpeg
+*.png
+*.PNG
+*.JPG
+*.JPEG
