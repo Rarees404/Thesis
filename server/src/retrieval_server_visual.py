@@ -181,7 +181,7 @@ async def segment_image(request: SegmentRequest):
         sam_segmenter.set_image(image, path=request.image_path)
 
         points = [{"x": p.x, "y": p.y, "label": p.label} for p in request.points]
-        result = sam_segmenter.segment_points(points)
+        result = sam_segmenter.segment_points(points, image_path=request.image_path)
 
         mask = result["mask"]
         region = apply_mask(image, mask)

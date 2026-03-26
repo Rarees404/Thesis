@@ -27,6 +27,9 @@ class SAM2Segmenter:
         self.predictor = SAM2ImagePredictor(model)
         self.device = device
         self._current_path: Optional[str] = None
+        # Cache last logit mask per image path for iterative refinement.
+        # Shape stored: (1, 256, 256) — can be passed back as mask_input.
+        self._logit_cache: Dict[str, np.ndarray] = {}
         print(f"[SAM2] Loaded on {device}")
 
     def set_image(self, image: Image.Image, path: Optional[str] = None):
@@ -35,17 +38,43 @@ class SAM2Segmenter:
         self.predictor.set_image(np.array(image.convert("RGB")))
         self._current_path = path
 
-    def segment_points(self, points: List[Dict]) -> Dict:
+    def segment_points(self, points: List[Dict], image_path: Optional[str] = None) -> Dict:
         coords = np.array([[p["x"], p["y"]] for p in points], dtype=np.float32)
         labels = np.array([p["label"] for p in points], dtype=np.int32)
+        n_points = len(points)
 
-        masks, scores, _ = self.predictor.predict(
+        # SAM2 accuracy rules:
+        #   - 1 click  → multimask_output=True  (pick best of 3 candidates)
+        #   - N clicks → multimask_output=False (model commits to one unified mask)
+        use_multimask = (n_points == 1)
+
+        # Retrieve cached logits from prior call on this image for iterative
+        # refinement. This is SAM2's primary interactive mechanism.
+        cache_key = image_path or ""
+        prev_logits = self._logit_cache.get(cache_key)
+
+        masks, scores, logits = self.predictor.predict(
             point_coords=coords,
             point_labels=labels,
-            multimask_output=True,
+            mask_input=prev_logits,
+            multimask_output=use_multimask,
+            return_logits=True,
         )
+
         best = int(np.argmax(scores))
+
+        # Cache the best logit for the next incremental click on this image.
+        # logits shape: (N_masks, 256, 256) — store the best one as (1, 256, 256).
+        self._logit_cache[cache_key] = logits[best: best + 1]
+
         return {"mask": masks[best].astype(bool), "score": float(scores[best])}
+
+    def clear_logit_cache(self, image_path: Optional[str] = None):
+        """Call when the user resets annotations for an image."""
+        if image_path and image_path in self._logit_cache:
+            del self._logit_cache[image_path]
+        elif image_path is None:
+            self._logit_cache.clear()
 
     def segment_text(self, text_prompt: str) -> List[Dict]:
         raise NotImplementedError("SAM 2 does not support text prompts — upgrade to SAM 3")
@@ -93,13 +122,15 @@ class SAM3Segmenter:
             for i in range(masks.shape[0])
         ]
 
-    def segment_points(self, points: List[Dict]) -> Dict:
+    def segment_points(self, points: List[Dict], image_path: Optional[str] = None) -> Dict:
         if self._interactive is None or not self._interactive_set:
             raise RuntimeError("Interactive predictor not available")
         coords = np.array([[p["x"], p["y"]] for p in points], dtype=np.float32)
         labels = np.array([p["label"] for p in points], dtype=np.int32)
+        n_points = len(points)
+        use_multimask = (n_points == 1)
         masks, scores, _ = self._interactive.predict(
-            point_coords=coords, point_labels=labels, multimask_output=True,
+            point_coords=coords, point_labels=labels, multimask_output=use_multimask,
         )
         best = int(np.argmax(scores))
         return {"mask": masks[best].astype(bool), "score": float(scores[best])}
@@ -138,32 +169,71 @@ def build_segmenter(device: str, checkpoints_dir: str):
 # Shared utilities
 # ---------------------------------------------------------------------------
 
-def apply_mask(image: Image.Image, mask: np.ndarray) -> Image.Image:
+def apply_mask(image: Image.Image, mask: np.ndarray, fill_value: int = 128) -> Image.Image:
+    """
+    Crop the image to the bounding box of `mask`, with non-masked pixels set
+    to neutral gray (128) rather than black. Neutral gray keeps SigLIP patch
+    embeddings from being biased toward dark/empty regions — SigLIP was trained
+    on natural images, not black-background crops.
+    """
     img_np = np.array(image.convert("RGB"))
     if mask.shape != (img_np.shape[0], img_np.shape[1]):
         m = Image.fromarray(mask.astype(np.uint8) * 255)
         m = m.resize((img_np.shape[1], img_np.shape[0]), Image.NEAREST)
         mask = np.array(m) > 127
-    masked = img_np * mask[:, :, np.newaxis]
+
+    # Fill background with neutral gray instead of black zeros
+    bg = np.full_like(img_np, fill_value)
+    composite = np.where(mask[:, :, np.newaxis], img_np, bg)
+
     rows, cols = np.where(mask)
     if len(rows) == 0:
         return image
-    cropped = masked[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+    cropped = composite[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
     return Image.fromarray(cropped.astype(np.uint8))
 
 
 def mask_to_rle(mask: np.ndarray) -> dict:
+    """
+    Encode a binary mask as RLE in COCO convention:
+      counts[0]  = number of background pixels before the first foreground pixel (may be 0)
+      counts[1]  = length of first foreground run
+      counts[2]  = length of next background run
+      ...
+    Both this function and rle_to_mask (and the frontend decoder) must use the
+    same convention.  The previous implementation based on np.diff(prepend=0)
+    dropped the initial background run entirely, causing every decoded mask to
+    appear at a wrong position in the image.
+    """
     flat = mask.flatten().astype(np.uint8)
-    diffs = np.diff(flat, prepend=0)
-    starts = np.where(diffs != 0)[0]
-    lengths = np.diff(np.append(starts, len(flat)))
-    return {"counts": lengths.tolist(), "size": list(mask.shape)}
+    n = len(flat)
+    if n == 0:
+        return {"counts": [], "size": list(mask.shape)}
+
+    # Find indices where the value changes (transition boundaries)
+    diffs = np.diff(flat.astype(np.int8))
+    change_positions = np.where(diffs != 0)[0] + 1   # +1: change takes effect at next pixel
+
+    # Boundaries: start of image, every transition, end of image
+    boundaries = np.concatenate([[0], change_positions, [n]])
+    counts = np.diff(boundaries).tolist()
+
+    # COCO convention: first count is always a background run.
+    # If the mask starts with foreground, prepend a zero-length background run.
+    if flat[0] == 1:
+        counts = [0] + counts
+
+    return {"counts": counts, "size": list(mask.shape)}
 
 
 def rle_to_mask(rle: dict) -> np.ndarray:
+    """
+    Decode a COCO-convention RLE back to a binary mask.
+    counts[0] is always a background run (may be 0), then alternates fg/bg.
+    """
     h, w = rle["size"]
     flat = np.zeros(h * w, dtype=np.uint8)
-    pos, val = 0, 0
+    pos, val = 0, 0  # start with background (val=0)
     for length in rle["counts"]:
         flat[pos:pos + length] = val
         pos += length

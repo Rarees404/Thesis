@@ -36,12 +36,45 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
 
   const points = samAnnotation?.points ?? [];
 
+  /**
+   * Compute the actual rendered image rectangle inside the container when
+   * `object-contain` is applied. Returns the letterbox offset and rendered
+   * size so that canvas drawing and click mapping stay in sync.
+   */
+  const getImageDisplayRect = useCallback(
+    (canvasW: number, canvasH: number) => {
+      if (naturalSize.w === 0 || naturalSize.h === 0) {
+        return { offsetX: 0, offsetY: 0, renderedW: canvasW, renderedH: canvasH };
+      }
+      const imgAspect = naturalSize.w / naturalSize.h;
+      const containerAspect = canvasW / canvasH;
+      let renderedW: number, renderedH: number, offsetX: number, offsetY: number;
+      if (imgAspect > containerAspect) {
+        // wider image → fills width, letterbox top/bottom
+        renderedW = canvasW;
+        renderedH = canvasW / imgAspect;
+        offsetX = 0;
+        offsetY = (canvasH - renderedH) / 2;
+      } else {
+        // taller image → fills height, letterbox left/right
+        renderedH = canvasH;
+        renderedW = canvasH * imgAspect;
+        offsetX = (canvasW - renderedW) / 2;
+        offsetY = 0;
+      }
+      return { offsetX, offsetY, renderedW, renderedH };
+    },
+    [naturalSize]
+  );
+
   const drawPoints = useCallback(
     (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      if (naturalSize.w === 0 || naturalSize.h === 0) return;
       ctx.clearRect(0, 0, w, h);
+      const { offsetX, offsetY, renderedW, renderedH } = getImageDisplayRect(w, h);
       for (const pt of points) {
-        const displayX = (pt.x / naturalSize.w) * w;
-        const displayY = (pt.y / naturalSize.h) * h;
+        const displayX = offsetX + (pt.x / naturalSize.w) * renderedW;
+        const displayY = offsetY + (pt.y / naturalSize.h) * renderedH;
 
         ctx.beginPath();
         ctx.arc(displayX, displayY, 8, 0, Math.PI * 2);
@@ -57,7 +90,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
         ctx.fill();
       }
     },
-    [points, naturalSize]
+    [points, naturalSize, getImageDisplayRect]
   );
 
   useEffect(() => {
@@ -94,16 +127,18 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const imgData = offCtx.createImageData(w, h);
     const data = imgData.data;
 
+    // COCO-convention RLE: first count is background, then alternates fg/bg.
+    // val=0 means background (skip), val=1 means foreground (draw).
     let pos = 0;
     let val = 0;
     for (const length of rle.counts) {
-      for (let j = 0; j < length; j++) {
-        if (val === 1) {
+      if (val === 1) {
+        for (let j = 0; j < length; j++) {
           const idx = (pos + j) * 4;
-          data[idx] = 99;     // R
-          data[idx + 1] = 102; // G
-          data[idx + 2] = 241; // B (indigo)
-          data[idx + 3] = 100; // alpha
+          data[idx] = 220;     // R — military red
+          data[idx + 1] = 38;  // G
+          data[idx + 2] = 38;  // B
+          data[idx + 3] = 150; // alpha — increased for visibility
         }
       }
       pos += length;
@@ -111,8 +146,10 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     }
     offCtx.putImageData(imgData, 0, 0);
 
-    ctx.drawImage(offscreen, 0, 0, w, h, 0, 0, imgSize.w, imgSize.h);
-  }, [samAnnotation, imgSize]);
+    // Draw mask aligned to the letterboxed image area, not the full container
+    const { offsetX, offsetY, renderedW, renderedH } = getImageDisplayRect(imgSize.w, imgSize.h);
+    ctx.drawImage(offscreen, 0, 0, w, h, offsetX, offsetY, renderedW, renderedH);
+  }, [samAnnotation, imgSize, getImageDisplayRect]);
 
   useEffect(() => {
     drawMask();
@@ -120,12 +157,27 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
 
   function getOriginalCoords(e: React.MouseEvent) {
     const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect || naturalSize.w === 0) return null;
-    const displayX = e.clientX - rect.left;
-    const displayY = e.clientY - rect.top;
+    if (!rect || naturalSize.w === 0 || naturalSize.h === 0) return null;
+
+    // Compute the letterbox-corrected rendered image rectangle.
+    // The canvas / container may be larger than the displayed image when
+    // object-contain is applied; we must map only within the image area.
+    const { offsetX, offsetY, renderedW, renderedH } = getImageDisplayRect(
+      rect.width,
+      rect.height
+    );
+
+    const imageX = e.clientX - rect.left - offsetX;
+    const imageY = e.clientY - rect.top - offsetY;
+
+    // Reject clicks that land in the letterbox area outside the image
+    if (imageX < 0 || imageY < 0 || imageX > renderedW || imageY > renderedH) {
+      return null;
+    }
+
     return {
-      x: Math.round((displayX / rect.width) * naturalSize.w),
-      y: Math.round((displayY / rect.height) * naturalSize.h),
+      x: Math.round((imageX / renderedW) * naturalSize.w),
+      y: Math.round((imageY / renderedH) * naturalSize.h),
     };
   }
 

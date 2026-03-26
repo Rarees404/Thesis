@@ -247,10 +247,10 @@ class RetrievalServiceVisual(RetrievalService):
         config: Dict[str, Any],
         faiss_index: str,
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-        alpha: float = 0.6,
-        beta: float = 0.2,
-        gamma: float = 0.2,
-    ):  
+        alpha: float = 0.8,
+        beta: float = 0.5,
+        gamma: float = 0.15,
+    ):
         super().__init__(
             config=config,
             faiss_index=faiss_index,
@@ -342,13 +342,13 @@ class RetrievalServiceVisual(RetrievalService):
                 negative_embeddings = None
 
             processed_query = self.wrapper.process_inputs(text=query)
-            with torch.no_grad():
-                query_embedding = self.wrapper.get_text_embeddings(processed_query)
+            query_embedding = self.wrapper.get_text_embeddings(processed_query)
 
-            print("Fusing initial query embedding!")
-            rocchio_query_embedding = (self.accumulated_query_embeddings["query_embedding"] + query_embedding) / 2 if (
-                fuse_initial_query
-            ) else self.accumulated_query_embeddings["query_embedding"]
+            if fuse_initial_query:
+                print("[Rocchio] Fusing fresh text embedding with accumulated query")
+                rocchio_query_embedding = (self.accumulated_query_embeddings["query_embedding"] + query_embedding) / 2
+            else:
+                rocchio_query_embedding = self.accumulated_query_embeddings["query_embedding"]
 
             self.accumulated_query_embeddings["query_embedding"] = self.rocchio_update(
                 query_embeddings=rocchio_query_embedding,
