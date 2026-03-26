@@ -16,7 +16,6 @@ interface ImageCardProps {
 }
 
 const POINT_COLORS = { 1: "#22c55e", 0: "#ef4444" } as const;
-const POINT_LABELS = { 1: "Relevant", 0: "Irrelevant" } as const;
 
 export function ImageCard({ image, index, showAnnotations = true }: ImageCardProps) {
   const setSamAnnotation = useAppStore((s) => s.setSamAnnotation);
@@ -100,10 +99,10 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
       for (let j = 0; j < length; j++) {
         if (val === 1) {
           const idx = (pos + j) * 4;
-          data[idx] = 99;     // R
-          data[idx + 1] = 102; // G
-          data[idx + 2] = 241; // B (indigo)
-          data[idx + 3] = 100; // alpha
+          data[idx] = 220;     // R (military red)
+          data[idx + 1] = 38;  // G
+          data[idx + 2] = 38;  // B
+          data[idx + 3] = 80;  // alpha
         }
       }
       pos += length;
@@ -163,25 +162,25 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
   const bgCount = points.filter((p) => p.label === 0).length;
 
   return (
-    <Card className="group overflow-hidden gap-0 py-0">
-      <div className="relative border-b">
+    <Card className="group overflow-hidden gap-0 py-0 border-red-600/10">
+      <div className="relative border-b border-red-600/10">
         <div className="absolute left-2 top-2 z-20 flex items-center gap-1.5">
           <Badge
             variant="secondary"
-            className="text-[10px] font-mono bg-black/70 text-white/80 border border-white/10 backdrop-blur-md"
+            className="text-[10px] font-mono bg-black/80 text-amber-400 border border-red-600/20 backdrop-blur-md"
           >
             #{index + 1}
           </Badge>
           <Badge
             variant="secondary"
-            className="text-[10px] font-mono bg-black/70 text-white/80 border border-white/10 backdrop-blur-md"
+            className="text-[10px] font-mono bg-black/80 text-amber-400 border border-red-600/20 backdrop-blur-md"
           >
             {image.score.toFixed(4)}
           </Badge>
           {loading && (
             <Badge
               variant="secondary"
-              className="text-[10px] font-mono bg-indigo-600/80 text-white border-0 backdrop-blur-md gap-1"
+              className="text-[10px] font-mono bg-red-600/80 text-white border-0 backdrop-blur-md gap-1"
             >
               <Loader2 className="h-3 w-3 animate-spin" />
               SAM
@@ -190,7 +189,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           {samAnnotation?.score != null && !loading && (
             <Badge
               variant="secondary"
-              className="text-[10px] font-mono bg-indigo-600/80 text-white border-0 backdrop-blur-md"
+              className="text-[10px] font-mono bg-red-600/80 text-white border-0 backdrop-blur-md"
             >
               {(samAnnotation.score * 100).toFixed(0)}%
             </Badge>
@@ -200,7 +199,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
         {!expanded && (
           <button
             onClick={() => setExpanded(true)}
-            className="absolute right-2 top-2 z-20 rounded-md bg-black/50 p-1.5 text-white/70 border border-white/10 opacity-0 transition-opacity group-hover:opacity-100 backdrop-blur-md"
+            className="absolute right-2 top-2 z-20 bg-black/60 p-1.5 text-neutral-400 border border-red-600/20 opacity-0 transition-opacity group-hover:opacity-100 backdrop-blur-md"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
@@ -215,7 +214,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           <img
             ref={imgRef}
             src={`data:image/png;base64,${image.base64}`}
-            alt={`Result ${index + 1}`}
+            alt={`Asset ${index + 1}`}
             className={`block w-full object-contain ${expanded ? "max-h-[600px]" : "aspect-square"}`}
             draggable={false}
             onLoad={(e) => {
@@ -242,7 +241,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               size="sm"
               variant={activeLabel === 1 ? "default" : "outline"}
               onClick={() => setActiveLabel(1)}
-              className="h-7 gap-1 text-xs flex-1"
+              className="h-7 gap-1 text-xs flex-1 font-rajdhani tracking-wider uppercase"
               style={activeLabel === 1 ? { backgroundColor: "#22c55e" } : {}}
             >
               <MousePointer2 className="h-3 w-3" />
@@ -252,7 +251,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               size="sm"
               variant={activeLabel === 0 ? "default" : "outline"}
               onClick={() => setActiveLabel(0)}
-              className="h-7 gap-1 text-xs flex-1"
+              className="h-7 gap-1 text-xs flex-1 font-rajdhani tracking-wider uppercase"
               style={activeLabel === 0 ? { backgroundColor: "#ef4444" } : {}}
             >
               <MousePointer2 className="h-3 w-3" />
@@ -270,7 +269,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           </div>
 
           {points.length > 0 && (
-            <div className="flex gap-2 text-[10px] text-muted-foreground">
+            <div className="flex gap-2 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
               {fgCount > 0 && <span className="text-green-400">{fgCount} relevant click{fgCount !== 1 && "s"}</span>}
               {bgCount > 0 && <span className="text-red-400">{bgCount} irrelevant click{bgCount !== 1 && "s"}</span>}
             </div>

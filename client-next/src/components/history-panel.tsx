@@ -12,11 +12,11 @@ export function HistoryPanel() {
   if (history.length === 0) return null;
 
   return (
-    <Card>
+    <Card className="border-red-600/10">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base text-white/80">
-          <History className="h-4 w-4 text-white/40" />
-          Feedback History
+        <CardTitle className="flex items-center gap-2 text-base text-neutral-400">
+          <History className="h-4 w-4 text-red-500/60" />
+          MISSION LOG
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -25,10 +25,10 @@ export function HistoryPanel() {
             {history.map((round) => (
               <div key={round.round} className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[10px] border-white/10 bg-white/5 text-white/60">
-                    Round {round.round}
+                  <Badge variant="outline" className="text-[10px] border-red-600/20 bg-red-600/5 text-red-400 font-mono tracking-widest">
+                    PHASE {String(round.round).padStart(2, "0")}
                   </Badge>
-                  <span className="text-[10px] text-white/30">
+                  <span className="text-[10px] font-mono text-neutral-600 tracking-wider">
                     {new Date(round.timestamp).toLocaleTimeString()}
                   </span>
                 </div>
@@ -38,8 +38,8 @@ export function HistoryPanel() {
                     <img
                       key={i}
                       src={`data:image/png;base64,${img.base64}`}
-                      alt={`Round ${round.round} result ${i + 1}`}
-                      className="h-14 w-14 rounded-lg border border-white/[0.06] object-cover flex-shrink-0"
+                      alt={`Phase ${round.round} asset ${i + 1}`}
+                      className="h-14 w-14 border border-red-600/10 object-cover flex-shrink-0"
                     />
                   ))}
                 </div>

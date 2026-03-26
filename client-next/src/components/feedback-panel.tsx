@@ -6,7 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   ThumbsUp,
   ThumbsDown,
-  Sparkles,
+  Crosshair,
   Loader2,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
@@ -38,32 +38,32 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
     irrelevantCaptions.trim();
 
   return (
-    <Card>
+    <Card className="border-red-600/15">
       <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Sparkles className="h-4 w-4 text-indigo-400" />
-          Relevance Feedback
+          <Crosshair className="h-4 w-4 text-red-500" />
+          INTEL ASSESSMENT
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-white/40">
-          Click on the images above to mark relevant (green) and irrelevant (red) regions
-          using SAM segmentation. Optionally add text descriptions below to refine results.
+        <p className="text-sm text-neutral-500">
+          Click on intel assets above to mark targets (green) and exclusions (red)
+          using SAM segmentation. Add text descriptions below to refine mission parameters.
         </p>
 
-        <Separator className="bg-white/[0.06]" />
+        <Separator className="bg-red-600/10" />
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <label className="flex items-center gap-1.5 text-sm font-medium text-green-400">
+            <label className="flex items-center gap-1.5 text-xs font-rajdhani font-semibold tracking-wider text-green-400 uppercase">
               <ThumbsUp className="h-3.5 w-3.5" />
-              Relevant details
+              Target details
             </label>
             <VanishInput
               placeholders={[
                 "e.g. person on bicycle, red jacket...",
-                "e.g. golden hour lighting, warm tones...",
-                "e.g. close-up, sharp focus, vivid colors...",
+                "e.g. warm lighting, daylight conditions...",
+                "e.g. close-up, high resolution target...",
               ]}
               value={relevantCaptions}
               onChange={(e) => setRelevantCaptions(e.target.value)}
@@ -74,15 +74,15 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
             />
           </div>
           <div className="space-y-2">
-            <label className="flex items-center gap-1.5 text-sm font-medium text-red-400">
+            <label className="flex items-center gap-1.5 text-xs font-rajdhani font-semibold tracking-wider text-red-400 uppercase">
               <ThumbsDown className="h-3.5 w-3.5" />
-              Irrelevant details
+              Exclude details
             </label>
             <VanishInput
               placeholders={[
-                "e.g. cars, buildings, background...",
-                "e.g. indoor scenes, dark lighting...",
-                "e.g. crowds, blurry, low quality...",
+                "e.g. vehicles, structures, terrain...",
+                "e.g. indoor environments, low-vis...",
+                "e.g. crowds, degraded imagery...",
               ]}
               value={irrelevantCaptions}
               onChange={(e) => setIrrelevantCaptions(e.target.value)}
@@ -100,17 +100,17 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
             id="fuse-query"
             checked={fuseInitialQuery}
             onChange={(e) => setFuseInitialQuery(e.target.checked)}
-            className="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500"
+            className="h-4 w-4 border-red-600/30 bg-black/40 accent-red-600"
           />
-          <label htmlFor="fuse-query" className="text-sm text-white/40">
-            Fuse with initial query (prevents drift across multiple rounds)
+          <label htmlFor="fuse-query" className="text-sm text-neutral-500 font-mono text-xs tracking-wider uppercase">
+            Fuse with initial query (prevents mission drift)
           </label>
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <div className="flex gap-3 text-xs text-white/30">
+          <div className="flex gap-3 text-xs font-mono text-neutral-600 uppercase tracking-wider">
             {samCount > 0 && (
-              <span className="text-indigo-400">
+              <span className="text-red-400">
                 {samCount} SAM mask{samCount !== 1 && "s"}
               </span>
             )}
@@ -121,14 +121,14 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
           <Button
             onClick={onApply}
             disabled={!hasAnyFeedback || isApplyingFeedback}
-            className="gap-2 bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30"
+            className="gap-2 bg-red-600 hover:bg-red-500 border border-red-500/30 font-rajdhani tracking-[0.15em] uppercase text-xs font-semibold"
           >
             {isApplyingFeedback ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <Sparkles className="h-4 w-4" />
+              <Crosshair className="h-4 w-4" />
             )}
-            Apply Feedback
+            EXECUTE FEEDBACK
           </Button>
         </div>
       </CardContent>

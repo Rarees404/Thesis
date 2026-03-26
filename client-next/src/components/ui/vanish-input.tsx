@@ -12,7 +12,7 @@ interface VanishInputProps {
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   disabled?: boolean;
   className?: string;
-  accentColor?: string; // tailwind color class for focus ring e.g. "indigo"
+  accentColor?: string;
   submitIcon?: React.ReactNode;
   hideSubmitButton?: boolean;
 }
@@ -25,7 +25,7 @@ export function VanishInput({
   onKeyDown,
   disabled,
   className,
-  accentColor = "indigo",
+  accentColor = "red",
   submitIcon,
   hideSubmitButton = false,
 }: VanishInputProps) {
@@ -116,7 +116,6 @@ export function VanishInput({
             newArr.push(current);
           } else {
             if (current.r <= 0) { current.r = 0; continue; }
-            // slower drift — smaller random displacement, slower fade
             current.x += (Math.random() - 0.48) * 1.2;
             current.y += (Math.random() - 0.5) * 1.2;
             current.r -= 0.025 * Math.random();
@@ -138,7 +137,6 @@ export function VanishInput({
           });
         }
         if (newDataRef.current.length > 0) {
-          // step size 4 instead of 8 — sweep progresses more slowly
           animateFrame(pos - 4);
         } else {
           if (!controlled) setInternalValue("");
@@ -179,27 +177,27 @@ export function VanishInput({
   };
 
   const focusRingMap: Record<string, string> = {
-    indigo: "focus-within:border-indigo-500/50 focus-within:ring-indigo-500/20",
-    green: "focus-within:border-green-500/40 focus-within:ring-green-500/15",
     red: "focus-within:border-red-500/40 focus-within:ring-red-500/15",
-    violet: "focus-within:border-violet-500/50 focus-within:ring-violet-500/20",
+    green: "focus-within:border-green-500/40 focus-within:ring-green-500/15",
+    amber: "focus-within:border-amber-500/40 focus-within:ring-amber-500/15",
+    indigo: "focus-within:border-red-500/40 focus-within:ring-red-500/15",
+    violet: "focus-within:border-red-500/40 focus-within:ring-red-500/15",
   };
-  const ringClass = focusRingMap[accentColor] ?? focusRingMap.indigo;
+  const ringClass = focusRingMap[accentColor] ?? focusRingMap.red;
 
   return (
     <form
       onSubmit={handleSubmit}
       className={cn(
-        "relative w-full h-12 rounded-xl overflow-hidden",
-        "border border-white/[0.08] bg-white/[0.04] backdrop-blur-xl",
-        "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
+        "relative w-full h-12 overflow-hidden",
+        "border border-red-600/15 bg-black/40 backdrop-blur-xl",
+        "shadow-[0_0_0_1px_rgba(220,38,38,0.04)_inset]",
         "transition-all duration-200 focus-within:ring-1",
         ringClass,
         disabled && "opacity-50 pointer-events-none",
         className
       )}
     >
-      {/* vanish canvas */}
       <canvas
         ref={canvasRef}
         className={cn(
@@ -217,13 +215,12 @@ export function VanishInput({
         disabled={disabled}
         className={cn(
           "w-full h-full bg-transparent border-none outline-none ring-0",
-          "pl-4 sm:pl-5 text-base text-white z-50 relative",
+          "pl-4 sm:pl-5 text-base text-neutral-200 font-mono z-50 relative",
           hideSubmitButton ? "pr-4" : "pr-14",
           animating && "text-transparent"
         )}
       />
 
-      {/* animated placeholder */}
       <div className="absolute inset-0 flex items-center pointer-events-none">
         <AnimatePresence mode="wait">
           {!displayValue && (
@@ -234,7 +231,7 @@ export function VanishInput({
               exit={{ y: -10, opacity: 0, filter: "blur(4px)" }}
               transition={{ duration: 0.6, ease: [0.25, 0.1, 0.25, 1] }}
               className={cn(
-                "text-sm sm:text-base font-normal text-white/30 truncate",
+                "text-sm sm:text-base font-mono text-neutral-600 truncate uppercase tracking-wider",
                 "pl-4 sm:pl-5",
                 hideSubmitButton ? "pr-4" : "pr-14"
               )}
@@ -245,17 +242,16 @@ export function VanishInput({
         </AnimatePresence>
       </div>
 
-      {/* submit button */}
       {!hideSubmitButton && (
         <button
           type="submit"
           disabled={!displayValue || disabled}
           className={cn(
             "absolute right-2 top-1/2 -translate-y-1/2 z-50",
-            "h-8 w-8 rounded-lg flex items-center justify-center",
+            "h-8 w-8 flex items-center justify-center",
             "transition-all duration-200",
             "disabled:opacity-30 disabled:cursor-not-allowed",
-            "bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.08]"
+            "bg-red-600/10 hover:bg-red-600/20 border border-red-600/20"
           )}
         >
           {submitIcon ?? (
@@ -268,7 +264,7 @@ export function VanishInput({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className="text-white/60"
+              className="text-red-400/60"
             >
               <path stroke="none" d="M0 0h24v24H0z" fill="none" />
               <motion.path

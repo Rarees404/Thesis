@@ -5,12 +5,12 @@ import { useAppStore } from "@/lib/store";
 import { VanishInput } from "@/components/ui/vanish-input";
 
 const SEARCH_PLACEHOLDERS = [
-  "Describe the image you're looking for...",
-  "e.g. a dog playing on a beach at sunset",
-  "e.g. person riding a bicycle in a city",
-  "e.g. red car on a mountain road",
-  "e.g. group of people at a dinner table",
-  "e.g. aerial view of a coastline at dawn",
+  "ENTER TARGET DESCRIPTION...",
+  "e.g. HOSTILE VEHICLE ON MOUNTAIN ROAD",
+  "e.g. PERSON OF INTEREST NEAR COASTLINE",
+  "e.g. AERIAL SURVEILLANCE OF COMPOUND",
+  "e.g. UNIDENTIFIED OBJECT IN URBAN AREA",
+  "e.g. TACTICAL FORMATION IN OPEN FIELD",
 ];
 
 interface SearchBarProps {
@@ -24,7 +24,6 @@ export function SearchBar({ onSearch }: SearchBarProps) {
 
   return (
     <div className="flex gap-3 items-center">
-      {/* vanish input takes up full width */}
       <div className="flex-1">
         <VanishInput
           placeholders={SEARCH_PLACEHOLDERS}
@@ -33,13 +32,13 @@ export function SearchBar({ onSearch }: SearchBarProps) {
           onSubmit={(e) => { e.preventDefault(); if (query.trim() && !isSearching) onSearch(); }}
           onKeyDown={(e) => { if (e.key === "Enter" && query.trim() && !isSearching) onSearch(); }}
           disabled={isSearching}
-          accentColor="indigo"
+          accentColor="red"
           className="h-14 text-base"
           submitIcon={
             isSearching ? (
-              <Loader2 className="h-4 w-4 text-white/60 animate-spin" />
+              <Loader2 className="h-4 w-4 text-red-400/60 animate-spin" />
             ) : (
-              <Search className="h-4 w-4 text-white/60" />
+              <Search className="h-4 w-4 text-red-400/60" />
             )
           }
         />

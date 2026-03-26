@@ -50,31 +50,31 @@ export function CaptionPanel() {
   }
 
   return (
-    <Card className="border-amber-500/20">
+    <Card className="border-amber-500/15">
       <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2 text-base">
           <MessageSquareText className="h-4 w-4 text-amber-500" />
-          Llama 3.2 Vision Captions
-          <Badge variant="outline" className="text-[10px]">
-            Preview
+          ASSET ANALYSIS
+          <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-400">
+            PREVIEW
           </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-white/40">
-          Llama 3.2 Vision generates focused captions for each image segment
-          via Ollama. Captions are encoded by SigLIP to stay in the same
-          embedding space as the query.
+        <p className="text-sm text-neutral-500">
+          Llama 3.2 Vision generates tactical descriptions for each asset segment
+          via Ollama. Descriptions are encoded by SigLIP to maintain embedding
+          space coherence.
         </p>
 
         <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="gap-1 text-xs">
+          <Badge variant="secondary" className="gap-1 text-xs border border-amber-500/20 bg-amber-500/5 text-amber-400">
             <Zap className="h-3 w-3" />
             Ollama &middot; llama3.2-vision
           </Badge>
           {query && (
-            <Badge variant="outline" className="text-xs">
-              Query: &ldquo;{query}&rdquo;
+            <Badge variant="outline" className="text-xs font-mono border-red-600/20 text-neutral-400">
+              QUERY: &ldquo;{query}&rdquo;
             </Badge>
           )}
         </div>
@@ -83,19 +83,19 @@ export function CaptionPanel() {
           onClick={handleGenerate}
           disabled={generating}
           variant="secondary"
-          className="gap-2"
+          className="gap-2 font-rajdhani tracking-wider uppercase text-xs font-semibold border border-amber-500/20 bg-amber-500/5 text-amber-400 hover:bg-amber-500/10"
         >
           {generating ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
             <MessageSquareText className="h-4 w-4" />
           )}
-          {generating ? "Generating captions..." : "Generate Captions"}
+          {generating ? "ANALYZING ASSETS..." : "GENERATE ANALYSIS"}
         </Button>
 
         {captions.size > 0 && (
           <>
-            <Separator />
+            <Separator className="bg-red-600/10" />
             <div className="space-y-3">
               {images.map((img, i) => {
                 const cap = captions.get(i);
@@ -103,23 +103,23 @@ export function CaptionPanel() {
                 return (
                   <div
                     key={i}
-                    className="flex gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
+                    className="flex gap-3 border border-red-600/10 bg-black/30 p-3"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={`data:image/png;base64,${img.base64}`}
-                      alt={`Image ${i + 1}`}
-                      className="h-16 w-16 rounded object-cover flex-shrink-0"
+                      alt={`Asset ${i + 1}`}
+                      className="h-16 w-16 object-cover flex-shrink-0"
                     />
                     <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-sm font-medium leading-snug">
+                      <p className="text-sm font-medium leading-snug text-neutral-300">
                         &ldquo;{cap.caption}&rdquo;
                       </p>
-                      <div className="flex items-center gap-2 text-xs text-white/30">
-                        <Badge variant="secondary" className="text-[10px]">
+                      <div className="flex items-center gap-2 text-xs text-neutral-600">
+                        <Badge variant="secondary" className="text-[10px] border border-red-600/10">
                           {cap.model}
                         </Badge>
-                        <span className="flex items-center gap-0.5">
+                        <span className="flex items-center gap-0.5 font-mono">
                           <Clock className="h-3 w-3" />
                           {cap.latency_ms}ms
                         </span>

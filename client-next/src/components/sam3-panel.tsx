@@ -99,56 +99,56 @@ export function SAM3Panel() {
   const totalTextInstances = textResults.reduce((sum, r) => sum + r.instances.length, 0);
 
   return (
-    <Card className="border-indigo-500/20">
+    <Card className="border-red-600/15">
       <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2 text-base">
-          <Scan className="h-4 w-4 text-indigo-500" />
-          SAM Segmentation
+          <Scan className="h-4 w-4 text-red-500" />
+          SEGMENTATION MODULE
           {samLoaded === true && samType === "sam3" && (
             <Badge variant="outline" className="text-[10px] gap-1 text-green-400 border-green-400/30">
               <CheckCircle2 className="h-3 w-3" /> SAM 3
             </Badge>
           )}
           {samLoaded === true && samType === "sam2" && (
-            <Badge variant="outline" className="text-[10px] gap-1 text-blue-400 border-blue-400/30">
+            <Badge variant="outline" className="text-[10px] gap-1 text-amber-400 border-amber-400/30">
               <CheckCircle2 className="h-3 w-3" /> SAM 2
             </Badge>
           )}
           {samLoaded === false && (
-            <Badge variant="outline" className="text-[10px] gap-1 text-amber-400 border-amber-400/30">
-              <AlertTriangle className="h-3 w-3" /> Not loaded
+            <Badge variant="outline" className="text-[10px] gap-1 text-red-400 border-red-400/30">
+              <AlertTriangle className="h-3 w-3" /> OFFLINE
             </Badge>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {samLoaded === false && (
-          <p className="text-sm text-amber-400/80">
-            No SAM model loaded. Place a checkpoint in{" "}
-            <code className="bg-white/5 px-1.5 py-0.5 rounded text-xs">server/checkpoints/</code>{" "}
-            and restart the server.
+          <p className="text-sm text-amber-400/80 font-mono">
+            SEGMENTATION MODULE OFFLINE. Deploy checkpoint to{" "}
+            <code className="bg-red-600/10 px-1.5 py-0.5 text-xs border border-red-600/20">server/checkpoints/</code>{" "}
+            and restart operations.
           </p>
         )}
 
         <div className="space-y-3">
-          <p className="text-sm text-white/40">
-            <span className="text-indigo-400 font-medium">Text prompts</span> — Type a concept
-            and SAM 3 will segment all matching instances across all images.
+          <p className="text-sm text-neutral-500">
+            <span className="text-red-400 font-rajdhani font-semibold tracking-wider uppercase">Text prompts</span> — Describe a target
+            and SAM 3 will identify all matching instances across all intel assets.
             {samType === "sam2" && (
-              <span className="text-amber-400/80 ml-1">
-                (Requires SAM 3 — awaiting HuggingFace access approval)
+              <span className="text-amber-400/80 ml-1 font-mono text-xs">
+                (REQUIRES SAM 3 — PENDING ACCESS CLEARANCE)
               </span>
             )}
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-green-400">Relevant concept</label>
+              <label className="text-xs font-rajdhani font-semibold tracking-wider text-green-400 uppercase">Target concept</label>
               <VanishInput
                 placeholders={[
                   "e.g. person on bicycle",
-                  "e.g. red car",
-                  "e.g. dog playing in park",
+                  "e.g. red vehicle",
+                  "e.g. hostile equipment",
                 ]}
                 value={relevantPrompt}
                 onChange={(e) => setRelevantPrompt(e.target.value)}
@@ -159,12 +159,12 @@ export function SAM3Panel() {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-red-400">Irrelevant concept</label>
+              <label className="text-xs font-rajdhani font-semibold tracking-wider text-red-400 uppercase">Exclude concept</label>
               <VanishInput
                 placeholders={[
-                  "e.g. buildings, background",
-                  "e.g. crowd of people",
-                  "e.g. parked vehicles",
+                  "e.g. buildings, terrain",
+                  "e.g. civilian crowd",
+                  "e.g. stationary vehicles",
                 ]}
                 value={irrelevantPrompt}
                 onChange={(e) => setIrrelevantPrompt(e.target.value)}
@@ -181,7 +181,7 @@ export function SAM3Panel() {
               <Button
                 onClick={handleSegmentText}
                 disabled={segmenting || samType !== "sam3" || (!relevantPrompt.trim() && !irrelevantPrompt.trim())}
-                className="gap-2"
+                className="gap-2 bg-red-600/80 hover:bg-red-600 border border-red-500/30 font-rajdhani tracking-wider uppercase text-xs"
                 variant="secondary"
               >
                 {segmenting ? (
@@ -189,24 +189,24 @@ export function SAM3Panel() {
                 ) : (
                   <Scan className="h-4 w-4" />
                 )}
-                {segmenting ? "Segmenting..." : "Run SAM 3"}
+                {segmenting ? "SCANNING..." : "EXECUTE SAM 3"}
               </Button>
               {textResults.length > 0 && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setShowMasks((v) => !v)}
-                  className="gap-1.5 text-xs"
+                  className="gap-1.5 text-xs font-mono"
                 >
                   {showMasks ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                  {showMasks ? "Hide" : "Show"} masks
+                  {showMasks ? "HIDE" : "SHOW"} MASKS
                 </Button>
               )}
             </div>
             {totalTextInstances > 0 && (
-              <div className="flex items-center gap-1.5 text-xs text-white/30">
+              <div className="flex items-center gap-1.5 text-xs font-mono text-neutral-500">
                 <Layers className="h-3.5 w-3.5" />
-                {totalTextInstances} instance{totalTextInstances !== 1 && "s"} found
+                {totalTextInstances} INSTANCE{totalTextInstances !== 1 && "S"} DETECTED
               </div>
             )}
           </div>
@@ -214,7 +214,7 @@ export function SAM3Panel() {
 
         {textResults.length > 0 && showMasks && (
           <>
-            <Separator className="bg-white/[0.06]" />
+            <Separator className="bg-red-600/10" />
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
               {images.map((img, i) => {
                 const results = textResults.filter((r) => r.imageIndex === i);
@@ -224,12 +224,12 @@ export function SAM3Panel() {
                 if (allInstances.length === 0) return null;
 
                 return (
-                  <div key={i} className="relative overflow-hidden rounded-lg border border-white/[0.06]">
+                  <div key={i} className="relative overflow-hidden border border-red-600/15">
                     <div className="relative">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
                         src={`data:image/png;base64,${img.base64}`}
-                        alt={`SAM3 result ${i + 1}`}
+                        alt={`SAM result ${i + 1}`}
                         className="block w-full aspect-square object-contain"
                         draggable={false}
                       />
@@ -272,30 +272,30 @@ export function SAM3Panel() {
           </>
         )}
 
-        <Separator className="bg-white/[0.06]" />
+        <Separator className="bg-red-600/10" />
 
         <div className="space-y-2">
-          <p className="text-sm text-white/40">
-            <MousePointer2 className="inline h-3.5 w-3.5 mr-1 text-indigo-400" />
-            <span className="text-indigo-400 font-medium">Click prompts</span> — Click directly
-            on images above for fine-grained control.{" "}
-            <span className="text-green-400">Green</span> = relevant,{" "}
-            <span className="text-red-400">red</span> = irrelevant.
+          <p className="text-sm text-neutral-500">
+            <MousePointer2 className="inline h-3.5 w-3.5 mr-1 text-red-400" />
+            <span className="text-red-400 font-rajdhani font-semibold tracking-wider uppercase">Click prompts</span> — Click directly
+            on intel assets above for precision targeting.{" "}
+            <span className="text-green-400 font-mono text-xs">GREEN</span> = target,{" "}
+            <span className="text-red-400 font-mono text-xs">RED</span> = exclude.
           </p>
 
           {clickAnnotatedCount > 0 && (
             <div className="flex items-center justify-between">
-              <div className="flex gap-3 text-xs text-white/50">
+              <div className="flex gap-3 text-xs font-mono text-neutral-500 uppercase tracking-wider">
                 <span>
-                  <span className="text-white font-medium">{clickAnnotatedCount}</span> image{clickAnnotatedCount !== 1 && "s"} annotated via clicks
+                  <span className="text-amber-400 font-semibold">{clickAnnotatedCount}</span> asset{clickAnnotatedCount !== 1 && "s"} annotated
                 </span>
-                <span className="text-white/30">{totalClickPoints} click{totalClickPoints !== 1 && "s"} total</span>
+                <span className="text-neutral-600">{totalClickPoints} click{totalClickPoints !== 1 && "s"} total</span>
               </div>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={clearAllSamAnnotations}
-                className="gap-1.5 text-xs text-white/40 hover:text-white"
+                className="gap-1.5 text-xs text-neutral-500 hover:text-red-400 font-mono uppercase tracking-wider"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Clear all

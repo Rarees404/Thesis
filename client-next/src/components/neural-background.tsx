@@ -2,23 +2,12 @@
 
 import { useEffect, useRef } from "react";
 
-interface Neuron {
+interface Blip {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  soma: number;
-  hue: number;
-  phase: number;
-  pulseSpeed: number;
-}
-
-interface Signal {
-  from: number;
-  to: number;
-  t: number;
-  speed: number;
-  hue: number;
+  age: number;
+  maxAge: number;
+  size: number;
 }
 
 export function NeuralBackground() {
@@ -34,188 +23,194 @@ export function NeuralBackground() {
     let w = 0;
     let h = 0;
     let frame = 0;
-    const NEURON_COUNT = 80;
-    const CONNECT_DIST = 200;
-    const SIGNAL_CHANCE = 0.003;
-    const neurons: Neuron[] = [];
-    const signals: Signal[] = [];
+    const blips: Blip[] = [];
+    const GRID_SPACING = 60;
+    const BLIP_CHANCE = 0.018;
+    const MAX_BLIPS = 30;
 
     function resize() {
       w = canvas!.width = window.innerWidth;
       h = canvas!.height = window.innerHeight;
     }
 
-    function seed() {
-      resize();
-      neurons.length = 0;
-      for (let i = 0; i < NEURON_COUNT; i++) {
-        neurons.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          vx: (Math.random() - 0.5) * 0.35,
-          vy: (Math.random() - 0.5) * 0.35,
-          soma: 2.5 + Math.random() * 2,
-          hue: 220 + Math.random() * 80,
-          phase: Math.random() * Math.PI * 2,
-          pulseSpeed: 0.015 + Math.random() * 0.02,
-        });
+    resize();
+
+    function drawGrid() {
+      ctx!.strokeStyle = "rgba(220, 38, 38, 0.09)";
+      ctx!.lineWidth = 0.5;
+
+      for (let x = 0; x < w; x += GRID_SPACING) {
+        ctx!.beginPath();
+        ctx!.moveTo(x, 0);
+        ctx!.lineTo(x, h);
+        ctx!.stroke();
+      }
+      for (let y = 0; y < h; y += GRID_SPACING) {
+        ctx!.beginPath();
+        ctx!.moveTo(0, y);
+        ctx!.lineTo(w, y);
+        ctx!.stroke();
+      }
+
+      ctx!.fillStyle = "rgba(220, 38, 38, 0.15)";
+      for (let x = 0; x < w; x += GRID_SPACING) {
+        for (let y = 0; y < h; y += GRID_SPACING) {
+          ctx!.beginPath();
+          ctx!.arc(x, y, 1.2, 0, Math.PI * 2);
+          ctx!.fill();
+        }
       }
     }
 
-    function drawDendrite(
-      ax: number,
-      ay: number,
-      bx: number,
-      by: number,
-      alpha: number,
-      hueA: number,
-      hueB: number,
-      width: number
-    ) {
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const dx = bx - ax;
-      const dy = by - ay;
-      const perpX = -dy * 0.12;
-      const perpY = dx * 0.12;
-      const cpx = mx + perpX;
-      const cpy = my + perpY;
+    function drawRadar() {
+      const cx = w / 2;
+      const cy = h / 2;
+      const maxR = Math.max(w, h) * 0.7;
+      const sweepAngle = (frame * 0.005) % (Math.PI * 2);
 
-      const grad = ctx!.createLinearGradient(ax, ay, bx, by);
-      grad.addColorStop(0, `hsla(${hueA}, 70%, 60%, ${alpha})`);
-      grad.addColorStop(0.5, `hsla(${(hueA + hueB) / 2}, 60%, 55%, ${alpha * 0.7})`);
-      grad.addColorStop(1, `hsla(${hueB}, 70%, 60%, ${alpha})`);
+      // Concentric rings
+      for (let r = 100; r < maxR; r += 140) {
+        ctx!.beginPath();
+        ctx!.arc(cx, cy, r, 0, Math.PI * 2);
+        const ringAlpha = Math.max(0.02, 0.09 - r * 0.00004);
+        ctx!.strokeStyle = `rgba(220, 38, 38, ${ringAlpha})`;
+        ctx!.lineWidth = 0.8;
+        ctx!.stroke();
+      }
+
+      // Center crosshair
+      const chSize = 20;
+      ctx!.strokeStyle = "rgba(220, 38, 38, 0.2)";
+      ctx!.lineWidth = 1;
+      ctx!.beginPath();
+      ctx!.moveTo(cx - chSize, cy);
+      ctx!.lineTo(cx + chSize, cy);
+      ctx!.stroke();
+      ctx!.beginPath();
+      ctx!.moveTo(cx, cy - chSize);
+      ctx!.lineTo(cx, cy + chSize);
+      ctx!.stroke();
+
+      // Center dot
+      ctx!.fillStyle = "rgba(220, 38, 38, 0.3)";
+      ctx!.beginPath();
+      ctx!.arc(cx, cy, 2, 0, Math.PI * 2);
+      ctx!.fill();
+
+      // Sweep trail (conic gradient)
+      const grad = ctx!.createConicGradient(sweepAngle, cx, cy);
+      grad.addColorStop(0, "rgba(220, 38, 38, 0.18)");
+      grad.addColorStop(0.06, "rgba(220, 38, 38, 0.09)");
+      grad.addColorStop(0.14, "rgba(220, 38, 38, 0.02)");
+      grad.addColorStop(0.2, "rgba(220, 38, 38, 0)");
+      grad.addColorStop(1, "rgba(220, 38, 38, 0)");
 
       ctx!.beginPath();
-      ctx!.moveTo(ax, ay);
-      ctx!.quadraticCurveTo(cpx, cpy, bx, by);
-      ctx!.strokeStyle = grad;
-      ctx!.lineWidth = width;
+      ctx!.moveTo(cx, cy);
+      ctx!.arc(cx, cy, maxR, sweepAngle - 0.7, sweepAngle);
+      ctx!.closePath();
+      ctx!.fillStyle = grad;
+      ctx!.fill();
+
+      // Sweep leading edge line
+      ctx!.beginPath();
+      ctx!.moveTo(cx, cy);
+      const endX = cx + Math.cos(sweepAngle) * maxR;
+      const endY = cy + Math.sin(sweepAngle) * maxR;
+      ctx!.lineTo(endX, endY);
+      ctx!.strokeStyle = "rgba(220, 38, 38, 0.3)";
+      ctx!.lineWidth = 1.5;
       ctx!.stroke();
     }
 
-    function drawSoma(n: Neuron, pulse: number) {
-      const r = Math.max(n.soma * pulse, 0.5);
-      const glowR = r * 5;
+    function drawBlips() {
+      if (Math.random() < BLIP_CHANCE && blips.length < MAX_BLIPS) {
+        blips.push({
+          x: Math.random() * w,
+          y: Math.random() * h,
+          age: 0,
+          maxAge: 150 + Math.random() * 200,
+          size: 2.5 + Math.random() * 4,
+        });
+      }
 
-      const glow = ctx!.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowR);
-      glow.addColorStop(0, `hsla(${n.hue}, 80%, 70%, 0.5)`);
-      glow.addColorStop(0.3, `hsla(${n.hue}, 70%, 55%, 0.12)`);
-      glow.addColorStop(1, `hsla(${n.hue}, 70%, 50%, 0)`);
-      ctx!.fillStyle = glow;
-      ctx!.beginPath();
-      ctx!.arc(n.x, n.y, glowR, 0, Math.PI * 2);
-      ctx!.fill();
+      for (let i = blips.length - 1; i >= 0; i--) {
+        const b = blips[i];
+        b.age++;
+        if (b.age > b.maxAge) {
+          blips.splice(i, 1);
+          continue;
+        }
 
-      const inner = ctx!.createRadialGradient(n.x, n.y, 0, n.x, n.y, r);
-      inner.addColorStop(0, `hsla(${n.hue}, 90%, 85%, 0.95)`);
-      inner.addColorStop(0.6, `hsla(${n.hue}, 80%, 65%, 0.8)`);
-      inner.addColorStop(1, `hsla(${n.hue}, 70%, 50%, 0.4)`);
-      ctx!.fillStyle = inner;
-      ctx!.beginPath();
-      ctx!.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx!.fill();
+        const life = b.age / b.maxAge;
+        const alpha = life < 0.1 ? life / 0.1 : life > 0.7 ? (1 - life) / 0.3 : 1;
+        const pulse = 1 + Math.sin(b.age * 0.1) * 0.3;
+
+        // Outer glow
+        const glow = ctx!.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.size * 5 * pulse);
+        glow.addColorStop(0, `rgba(220, 38, 38, ${0.6 * alpha})`);
+        glow.addColorStop(0.3, `rgba(220, 38, 38, ${0.2 * alpha})`);
+        glow.addColorStop(0.7, `rgba(220, 38, 38, ${0.05 * alpha})`);
+        glow.addColorStop(1, "rgba(220, 38, 38, 0)");
+        ctx!.fillStyle = glow;
+        ctx!.beginPath();
+        ctx!.arc(b.x, b.y, b.size * 5 * pulse, 0, Math.PI * 2);
+        ctx!.fill();
+
+        // Core
+        ctx!.fillStyle = `rgba(255, 120, 120, ${0.95 * alpha})`;
+        ctx!.beginPath();
+        ctx!.arc(b.x, b.y, b.size * 0.7, 0, Math.PI * 2);
+        ctx!.fill();
+
+        // Ring around blip
+        ctx!.strokeStyle = `rgba(220, 38, 38, ${0.3 * alpha})`;
+        ctx!.lineWidth = 0.8;
+        ctx!.beginPath();
+        ctx!.arc(b.x, b.y, b.size * 2 * pulse, 0, Math.PI * 2);
+        ctx!.stroke();
+      }
     }
 
-    function drawSignal(sig: Signal) {
-      const a = neurons[sig.from];
-      const b = neurons[sig.to];
-      if (!a || !b) return;
+    function drawCoordinates() {
+      ctx!.font = "9px monospace";
+      ctx!.fillStyle = "rgba(220, 38, 38, 0.15)";
 
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const cpx = mx + (-dy * 0.12);
-      const cpy = my + (dx * 0.12);
-
-      const t = sig.t;
-      const sx = (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * cpx + t * t * b.x;
-      const sy = (1 - t) * (1 - t) * a.y + 2 * (1 - t) * t * cpy + t * t * b.y;
-
-      const pulseR = 4 + Math.sin(t * Math.PI) * 3;
-      const glow = ctx!.createRadialGradient(sx, sy, 0, sx, sy, pulseR * 3);
-      glow.addColorStop(0, `hsla(${sig.hue}, 90%, 80%, 0.9)`);
-      glow.addColorStop(0.4, `hsla(${sig.hue}, 80%, 60%, 0.3)`);
-      glow.addColorStop(1, `hsla(${sig.hue}, 70%, 50%, 0)`);
-      ctx!.fillStyle = glow;
-      ctx!.beginPath();
-      ctx!.arc(sx, sy, pulseR * 3, 0, Math.PI * 2);
-      ctx!.fill();
-
-      ctx!.fillStyle = `hsla(${sig.hue}, 95%, 90%, 1)`;
-      ctx!.beginPath();
-      ctx!.arc(sx, sy, 2, 0, Math.PI * 2);
-      ctx!.fill();
+      for (let x = GRID_SPACING * 3; x < w; x += GRID_SPACING * 3) {
+        ctx!.fillText(`${x}`, x + 2, 12);
+      }
+      for (let y = GRID_SPACING * 3; y < h; y += GRID_SPACING * 3) {
+        ctx!.fillText(`${y}`, 4, y - 2);
+      }
     }
 
     function tick() {
       frame++;
 
-      ctx!.fillStyle = "rgba(6, 6, 18, 0.15)";
+      // Slower fade = longer trails, more visible elements
+      ctx!.fillStyle = "rgba(5, 5, 5, 0.08)";
       ctx!.fillRect(0, 0, w, h);
 
-      for (let i = 0; i < neurons.length; i++) {
-        const n = neurons[i];
-        n.x += n.vx;
-        n.y += n.vy;
-        if (n.x < -20) n.x = w + 20;
-        if (n.x > w + 20) n.x = -20;
-        if (n.y < -20) n.y = h + 20;
-        if (n.y > h + 20) n.y = -20;
+      if (frame % 2 === 0) {
+        drawGrid();
       }
+      drawRadar();
+      drawBlips();
 
-      for (let i = 0; i < neurons.length; i++) {
-        const a = neurons[i];
-        for (let j = i + 1; j < neurons.length; j++) {
-          const b = neurons[j];
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < CONNECT_DIST) {
-            const strength = 1 - dist / CONNECT_DIST;
-            const alpha = strength * 0.28;
-            drawDendrite(a.x, a.y, b.x, b.y, alpha, a.hue, b.hue, strength * 1.8);
-
-            if (Math.random() < SIGNAL_CHANCE * strength) {
-              signals.push({
-                from: i,
-                to: j,
-                t: 0,
-                speed: 0.008 + Math.random() * 0.012,
-                hue: (a.hue + b.hue) / 2 + (Math.random() - 0.5) * 20,
-              });
-            }
-          }
-        }
-      }
-
-      for (let i = signals.length - 1; i >= 0; i--) {
-        const sig = signals[i];
-        sig.t += sig.speed;
-        if (sig.t >= 1) {
-          signals.splice(i, 1);
-        } else {
-          drawSignal(sig);
-        }
-      }
-
-      for (const n of neurons) {
-        const pulse = 0.85 + Math.sin(frame * n.pulseSpeed + n.phase) * 0.15;
-        drawSoma(n, pulse);
+      if (frame % 8 === 0) {
+        drawCoordinates();
       }
 
       animRef.current = requestAnimationFrame(tick);
     }
 
-    seed();
-    ctx.fillStyle = "rgb(6, 6, 18)";
+    ctx.fillStyle = "rgb(5, 5, 5)";
     ctx.fillRect(0, 0, w, h);
     tick();
 
     const handleResize = () => {
       resize();
-      ctx!.fillStyle = "rgb(6, 6, 18)";
+      ctx!.fillStyle = "rgb(5, 5, 5)";
       ctx!.fillRect(0, 0, w, h);
     };
     window.addEventListener("resize", handleResize);
