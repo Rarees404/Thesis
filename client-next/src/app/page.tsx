@@ -56,6 +56,7 @@ export default function Home() {
       relevantCaptions,
       irrelevantCaptions,
       fuseInitialQuery,
+      samAnnotations,
       setIsApplyingFeedback,
       setFeedbackResults,
       setError,
@@ -69,6 +70,18 @@ export default function Home() {
         img.boxes.length > 0 ? img.boxes : null
       );
 
+      const samList = images.map((_, i) => {
+        const annot = samAnnotations.get(i);
+        if (!annot?.mask_rle) return null;
+        const hasRelevant = annot.points.some((p) => p.label === 1);
+        return {
+          mask_rle: annot.mask_rle,
+          label: hasRelevant ? ("Relevant" as const) : ("Irrelevant" as const),
+        };
+      });
+
+      const hasSam = samList.some((s) => s !== null);
+
       const data = await applyFeedback({
         query,
         top_k: topK,
@@ -76,6 +89,7 @@ export default function Home() {
         relevant_captions: relevantCaptions,
         irrelevant_captions: irrelevantCaptions,
         annotator_json_boxes_list: boxesList,
+        ...(hasSam ? { sam_annotations: samList } : {}),
         fuse_initial_query: fuseInitialQuery,
       });
 
@@ -106,8 +120,8 @@ export default function Home() {
                   Visual Relevance Feedback
                 </h2>
                 <p className="max-w-xl text-white/40 text-lg">
-                  Search for images using natural language, annotate relevance
-                  with bounding boxes or SAM3 concepts, and iteratively refine
+                  Search for images using natural language, click to segment
+                  relevant regions with SAM, and iteratively refine
                   results with the Rocchio algorithm.
                 </p>
               </div>

@@ -1,8 +1,17 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Search, Loader2 } from "lucide-react";
+import { Loader2, Search } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { VanishInput } from "@/components/ui/vanish-input";
+
+const SEARCH_PLACEHOLDERS = [
+  "Describe the image you're looking for...",
+  "e.g. a dog playing on a beach at sunset",
+  "e.g. person riding a bicycle in a city",
+  "e.g. red car on a mountain road",
+  "e.g. group of people at a dinner table",
+  "e.g. aerial view of a coastline at dawn",
+];
 
 interface SearchBarProps {
   onSearch: () => void;
@@ -13,38 +22,28 @@ export function SearchBar({ onSearch }: SearchBarProps) {
   const setQuery = useAppStore((s) => s.setQuery);
   const isSearching = useAppStore((s) => s.isSearching);
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && query.trim() && !isSearching) {
-      onSearch();
-    }
-  }
-
   return (
-    <div className="flex gap-2">
-      <div className="relative flex-1">
-        <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-white/30" />
-        <input
-          placeholder="Describe the image you would like to find..."
+    <div className="flex gap-3 items-center">
+      {/* vanish input takes up full width */}
+      <div className="flex-1">
+        <VanishInput
+          placeholders={SEARCH_PLACEHOLDERS}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={handleKeyDown}
+          onSubmit={(e) => { e.preventDefault(); if (query.trim() && !isSearching) onSearch(); }}
+          onKeyDown={(e) => { if (e.key === "Enter" && query.trim() && !isSearching) onSearch(); }}
           disabled={isSearching}
-          className="h-11 w-full rounded-xl border border-white/[0.08] bg-white/[0.04] pl-10 pr-4 text-sm text-white placeholder:text-white/30 backdrop-blur-xl transition-colors focus:border-indigo-500/50 focus:outline-none focus:ring-1 focus:ring-indigo-500/30 disabled:opacity-50"
+          accentColor="indigo"
+          className="h-14 text-base"
+          submitIcon={
+            isSearching ? (
+              <Loader2 className="h-4 w-4 text-white/60 animate-spin" />
+            ) : (
+              <Search className="h-4 w-4 text-white/60" />
+            )
+          }
         />
       </div>
-      <Button
-        onClick={onSearch}
-        disabled={!query.trim() || isSearching}
-        size="lg"
-        className="gap-2 px-6 bg-indigo-600 hover:bg-indigo-500 border border-indigo-500/30"
-      >
-        {isSearching ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <Search className="h-4 w-4" />
-        )}
-        Search
-      </Button>
     </div>
   );
 }

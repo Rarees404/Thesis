@@ -48,6 +48,7 @@ class RetrievalService:
             self.config["VLM_MODEL_NAME"]
         )
         self.backbone = self.backbone_config["model_class"].from_pretrained(self.config["VLM_MODEL_NAME"])
+        self.backbone.to(self.device)
         self.backbone.eval()
         self.backbone_processor = (
             self.backbone_config["processor_class"]
@@ -58,6 +59,7 @@ class RetrievalService:
             model=self.backbone,
             processor=self.backbone_processor
         )
+        print(f"[backbone] Loaded {self.config['VLM_MODEL_NAME']} on {self.device}")
     
     def _init_captioning_model(self):
         model_config = get_model_config(
@@ -114,6 +116,11 @@ class RetrievalService:
         except FileNotFoundError as e:
             raise ValueError(f"Failed to read image paths: {e}. Check if the image paths file exists.")
 
+    @staticmethod
+    def _to_faiss(tensor: torch.Tensor):
+        """Move a tensor to CPU float32 numpy — required by FAISS on all devices."""
+        return tensor.detach().cpu().float().numpy()
+
     def search_images(self, query: str, top_k: int = 5):
         """Extract image_search function logic"""
         self.experiment_id += 1
@@ -124,7 +131,7 @@ class RetrievalService:
 
         self.accumulated_query_embeddings["query_embedding"] = query_embedding
 
-        scores, img_ids = self.index.search(query_embedding, top_k)
+        scores, img_ids = self.index.search(self._to_faiss(query_embedding), top_k)
         scores = scores.squeeze().tolist()
         img_ids = img_ids.squeeze().tolist()
         retrieved_image_paths = [self.candidate_image_paths[i] for i in img_ids]
@@ -218,7 +225,9 @@ class RetrievalService:
             negative_embeddings=negative_embeddings
         )
 
-        scores, img_ids = self.index.search(self.accumulated_query_embeddings["query_embedding"], top_k)
+        scores, img_ids = self.index.search(
+            self._to_faiss(self.accumulated_query_embeddings["query_embedding"]), top_k
+        )
         scores = scores.squeeze().tolist()
         img_ids = img_ids.squeeze().tolist()
         retrieved_image_paths = [self.candidate_image_paths[i] for i in img_ids]
@@ -265,12 +274,14 @@ class RetrievalServiceVisual(RetrievalService):
         relevant_captions: Optional[str] = None,
         irrelevant_captions: Optional[str] = None,
         annotator_json_boxes_list: Optional[List[Any]] = None,
+        sam_annotations: Optional[List[Any]] = None,
         fuse_initial_query: bool = False,
     ):
         relevance_feedback_results = self.image_based_relevance_feedback(
             query=query,
             relevant_image_paths=relevant_image_paths,
             annotator_json_boxes_list=annotator_json_boxes_list,
+            sam_annotations=sam_annotations,
             top_k_feedback=top_k
         )
 
@@ -346,7 +357,7 @@ class RetrievalServiceVisual(RetrievalService):
             )
 
         scores, img_ids = self.index.search(
-            self.accumulated_query_embeddings["query_embedding"],
+            self._to_faiss(self.accumulated_query_embeddings["query_embedding"]),
             top_k
         )
         scores = scores.squeeze().tolist()

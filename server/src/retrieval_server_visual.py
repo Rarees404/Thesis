@@ -11,8 +11,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from PIL import Image as PILImage
+
 from src.config import settings
 from src.services.retrieval_service import RetrievalServiceVisual
+from src.models.sam import build_segmenter, apply_mask, mask_to_rle, image_to_b64 as sam_img_to_b64
 from src.utils.image_utils import image_to_base64
 from src.utils.utils import load_yaml
 
@@ -48,6 +51,7 @@ class ProcessApplyFeedbackRequest(BaseModel):
     relevant_captions: str
     irrelevant_captions: str
     annotator_json_boxes_list: List[Any]
+    sam_annotations: Optional[List[Any]] = None
     fuse_initial_query: bool = False
 
 
@@ -59,12 +63,51 @@ class ProcessApplyFeedbackResponse(BaseModel):
     message: str
 
 
+class SegmentPoint(BaseModel):
+    x: float
+    y: float
+    label: int  # 1 = foreground/relevant, 0 = background/irrelevant
+
+
+class SegmentRequest(BaseModel):
+    image_path: str
+    points: List[SegmentPoint]
+
+
+class SegmentResponse(BaseModel):
+    mask_rle: dict
+    region_b64: str
+    score: float
+    width: int
+    height: int
+
+
+class SegmentTextRequest(BaseModel):
+    image_path: str
+    text_prompt: str
+
+
+class SegmentTextInstanceResponse(BaseModel):
+    mask_rle: dict
+    region_b64: str
+    score: float
+    bbox: List[float]
+
+
+class SegmentTextResponse(BaseModel):
+    instances: List[SegmentTextInstanceResponse]
+    width: int
+    height: int
+
+
 retrieval_service: Optional[RetrievalServiceVisual] = None
+sam_segmenter = None
+sam_model_type: str = "none"
 
 
 @app.on_event("startup")
 async def startup_event():
-    global retrieval_service
+    global retrieval_service, sam_segmenter, sam_model_type
 
     config = load_yaml(settings.config_path)
     if torch.cuda.is_available():
@@ -80,6 +123,12 @@ async def startup_event():
         faiss_index=settings.index_path,
         device=device,
     )
+
+    checkpoints_dir = os.path.normpath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checkpoints")
+    )
+    sam_segmenter, sam_model_type = build_segmenter(device=device, checkpoints_dir=checkpoints_dir)
+    print(f"[startup] SAM backend: {sam_model_type}")
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -108,6 +157,7 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
             relevant_captions=request.relevant_captions,
             irrelevant_captions=request.irrelevant_captions,
             annotator_json_boxes_list=request.annotator_json_boxes_list,
+            sam_annotations=request.sam_annotations,
             fuse_initial_query=request.fuse_initial_query
         )
         images = [image_to_base64(img) for img in images]
@@ -120,6 +170,81 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/segment", response_model=SegmentResponse)
+async def segment_image(request: SegmentRequest):
+    if sam_segmenter is None:
+        raise HTTPException(status_code=503, detail="No SAM model loaded")
+    try:
+        image = PILImage.open(request.image_path).convert("RGB")
+        sam_segmenter.set_image(image, path=request.image_path)
+
+        points = [{"x": p.x, "y": p.y, "label": p.label} for p in request.points]
+        result = sam_segmenter.segment_points(points)
+
+        mask = result["mask"]
+        region = apply_mask(image, mask)
+        rle = mask_to_rle(mask)
+
+        return SegmentResponse(
+            mask_rle=rle,
+            region_b64=sam_img_to_b64(region),
+            score=result["score"],
+            width=image.width,
+            height=image.height,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/segment_text", response_model=SegmentTextResponse)
+async def segment_text(request: SegmentTextRequest):
+    """Segment all instances matching a text prompt (SAM 3 only)."""
+    if sam_segmenter is None:
+        raise HTTPException(status_code=503, detail="No SAM model loaded")
+    if sam_model_type != "sam3":
+        raise HTTPException(
+            status_code=501,
+            detail="Text prompts require SAM 3 — currently using SAM 2 (point prompts only)",
+        )
+    try:
+        image = PILImage.open(request.image_path).convert("RGB")
+        sam_segmenter.set_image(image, path=request.image_path)
+
+        instances = sam_segmenter.segment_text(request.text_prompt)
+
+        response_instances = []
+        for inst in instances:
+            mask = inst["mask"]
+            region = apply_mask(image, mask)
+            rle = mask_to_rle(mask)
+            response_instances.append(SegmentTextInstanceResponse(
+                mask_rle=rle,
+                region_b64=sam_img_to_b64(region),
+                score=inst["score"],
+                bbox=inst["bbox"],
+            ))
+
+        return SegmentTextResponse(
+            instances=response_instances,
+            width=image.width,
+            height=image.height,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/sam_status")
+async def sam_status():
+    return {
+        "loaded": sam_segmenter is not None,
+        "model_type": sam_model_type,
+    }
 
 
 @app.get("/health")

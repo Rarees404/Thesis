@@ -305,6 +305,7 @@ class ImageBasedVLMRelevanceFeedback(RelevanceFeedback):
         query: str,
         relevant_image_paths: List[str],
         annotator_json_boxes_list: Optional[List[Any]] = None,
+        sam_annotations: Optional[List[Optional[Dict]]] = None,
         top_k_feedback: int = 5,
     ):
         if len(relevant_image_paths) < top_k_feedback:
@@ -315,18 +316,74 @@ class ImageBasedVLMRelevanceFeedback(RelevanceFeedback):
             image = Image.open(image_path)
             images.append(image)
 
-        segments = self._extract_image_segments(
-            images=images,
-            annotator_json_boxes_list=annotator_json_boxes_list
-        )
+        if sam_annotations and any(a is not None for a in sam_annotations):
+            segments = self._extract_sam_segments(
+                images=images,
+                sam_annotations=sam_annotations,
+            )
+        else:
+            segments = self._extract_image_segments(
+                images=images,
+                annotator_json_boxes_list=annotator_json_boxes_list or [None] * len(images),
+            )
 
         return segments
+
+    def _extract_sam_segments(
+        self,
+        images: List[Image.Image],
+        sam_annotations: List[Optional[Dict]],
+    ) -> Dict[str, List[Image.Image]]:
+        """Extract segments from SAM mask regions sent by the frontend."""
+        from src.models.sam import rle_to_mask
+
+        relevant_segments = []
+        irrelevant_segments = []
+
+        for i, annot in enumerate(sam_annotations):
+            if annot is None:
+                continue
+
+            mask_rle = annot.get("mask_rle")
+            label = annot.get("label", "Relevant")
+
+            if mask_rle:
+                mask = rle_to_mask(mask_rle)
+                img_np = np.array(images[i].convert("RGB"))
+
+                if mask.shape != (img_np.shape[0], img_np.shape[1]):
+                    from PIL import Image as PILImage
+                    mask_img = PILImage.fromarray(mask.astype(np.uint8) * 255)
+                    mask_img = mask_img.resize(
+                        (img_np.shape[1], img_np.shape[0]),
+                        PILImage.NEAREST,
+                    )
+                    mask = np.array(mask_img) > 127
+
+                masked = img_np * mask[:, :, np.newaxis]
+                rows, cols = np.where(mask)
+                if len(rows) == 0:
+                    continue
+                cropped = masked[rows.min():rows.max() + 1, cols.min():cols.max() + 1]
+                segment = Image.fromarray(cropped.astype(np.uint8)).resize(
+                    (self.img_size, self.img_size), Image.BICUBIC,
+                )
+
+                if label == "Relevant":
+                    relevant_segments.append(segment)
+                elif label == "Irrelevant":
+                    irrelevant_segments.append(segment)
+
+        return {
+            "relevant_segments": relevant_segments,
+            "irrelevant_segments": irrelevant_segments,
+        }
 
     def _extract_image_segments(
         self,
         images: List[Image.Image],
         annotator_json_boxes_list: List[Dict[str, Any]]
-    ) -> List[Image.Image]:
+    ) -> Dict[str, List[Image.Image]]:
         irrelevant_segments = []
         relevant_segments = []
         for i in range(len(annotator_json_boxes_list)):

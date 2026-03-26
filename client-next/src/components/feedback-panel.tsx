@@ -10,6 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { VanishInput } from "@/components/ui/vanish-input";
 
 interface FeedbackPanelProps {
   onApply: () => void;
@@ -24,11 +25,17 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
   const isApplyingFeedback = useAppStore((s) => s.isApplyingFeedback);
   const fuseInitialQuery = useAppStore((s) => s.fuseInitialQuery);
   const setFuseInitialQuery = useAppStore((s) => s.setFuseInitialQuery);
+  const samAnnotations = useAppStore((s) => s.samAnnotations);
 
   if (images.length === 0) return null;
 
   const totalBoxes = images.reduce((sum, img) => sum + img.boxes.length, 0);
-  const hasAnyFeedback = totalBoxes > 0 || relevantCaptions.trim() || irrelevantCaptions.trim();
+  const samCount = samAnnotations.size;
+  const hasAnyFeedback =
+    totalBoxes > 0 ||
+    samCount > 0 ||
+    relevantCaptions.trim() ||
+    irrelevantCaptions.trim();
 
   return (
     <Card>
@@ -40,8 +47,8 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-white/40">
-          Draw bounding boxes on the images above to annotate relevant (green) and
-          irrelevant (red) regions. Optionally provide text descriptions below.
+          Click on the images above to mark relevant (green) and irrelevant (red) regions
+          using SAM segmentation. Optionally add text descriptions below to refine results.
         </p>
 
         <Separator className="bg-white/[0.06]" />
@@ -52,12 +59,18 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
               <ThumbsUp className="h-3.5 w-3.5" />
               Relevant details
             </label>
-            <input
-              placeholder="e.g., person on bicycle, red jacket..."
+            <VanishInput
+              placeholders={[
+                "e.g. person on bicycle, red jacket...",
+                "e.g. golden hour lighting, warm tones...",
+                "e.g. close-up, sharp focus, vivid colors...",
+              ]}
               value={relevantCaptions}
               onChange={(e) => setRelevantCaptions(e.target.value)}
               disabled={isApplyingFeedback}
-              className="h-9 w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/25 backdrop-blur-xl focus:border-green-500/40 focus:outline-none focus:ring-1 focus:ring-green-500/20 disabled:opacity-50"
+              accentColor="green"
+              hideSubmitButton
+              className="h-11"
             />
           </div>
           <div className="space-y-2">
@@ -65,12 +78,18 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
               <ThumbsDown className="h-3.5 w-3.5" />
               Irrelevant details
             </label>
-            <input
-              placeholder="e.g., cars, buildings, background..."
+            <VanishInput
+              placeholders={[
+                "e.g. cars, buildings, background...",
+                "e.g. indoor scenes, dark lighting...",
+                "e.g. crowds, blurry, low quality...",
+              ]}
               value={irrelevantCaptions}
               onChange={(e) => setIrrelevantCaptions(e.target.value)}
               disabled={isApplyingFeedback}
-              className="h-9 w-full rounded-lg border border-white/[0.08] bg-white/[0.04] px-3 text-sm text-white placeholder:text-white/25 backdrop-blur-xl focus:border-red-500/40 focus:outline-none focus:ring-1 focus:ring-red-500/20 disabled:opacity-50"
+              accentColor="red"
+              hideSubmitButton
+              className="h-11"
             />
           </div>
         </div>
@@ -89,9 +108,14 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
         </div>
 
         <div className="flex items-center justify-between pt-2">
-          <div className="text-xs text-white/30">
+          <div className="flex gap-3 text-xs text-white/30">
+            {samCount > 0 && (
+              <span className="text-indigo-400">
+                {samCount} SAM mask{samCount !== 1 && "s"}
+              </span>
+            )}
             {totalBoxes > 0 && (
-              <span>{totalBoxes} bounding box{totalBoxes !== 1 && "es"} drawn</span>
+              <span>{totalBoxes} bounding box{totalBoxes !== 1 && "es"}</span>
             )}
           </div>
           <Button

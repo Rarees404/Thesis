@@ -201,3 +201,6 @@ results/
 *.PNG
 *.JPG
 *.JPEG
+
+# SAM3 cloned repo (install locally)
+server/sam3/

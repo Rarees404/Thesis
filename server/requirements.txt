@@ -21,3 +21,5 @@ pytorch-lightning==2.5.0.post0
 psutil
 pytest
 ultralytics==8.3.76
+# SAM 3 — install from GitHub: cd server/sam3 && pip install -e .
+# sam3 (editable install, not on PyPI)
