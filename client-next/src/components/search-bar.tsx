@@ -5,8 +5,7 @@ import { useAppStore } from "@/lib/store";
 import { VanishInput } from "@/components/ui/vanish-input";
 
 const SEARCH_PLACEHOLDERS = [
-  "Describe the image you're looking for...",
-  "e.g. a dog playing on a beach at sunset",
+  "Type what you're looking for — e.g. dog on a beach...",
   "e.g. person riding a bicycle in a city",
   "e.g. red car on a mountain road",
   "e.g. group of people at a dinner table",

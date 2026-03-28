@@ -10,6 +10,7 @@ import { Header } from "@/components/header";
 import { SearchBar } from "@/components/search-bar";
 import { ImageGallery } from "@/components/image-gallery";
 import { FeedbackPanel } from "@/components/feedback-panel";
+import { CaptionPanel } from "@/components/caption-panel";
 import { ServerDashboard } from "@/components/server-dashboard";
 import { ErrorBanner } from "@/components/error-banner";
 
@@ -115,23 +116,37 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-black">
       <NeuralBackground />
       <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
       <main className="relative z-10 mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         {activeTab === "search" && (
           <div className="space-y-6">
-            {/* Hero on empty state */}
             {store.images.length === 0 && !store.isSearching && (
-              <div className="flex flex-col items-center gap-3 pb-6 pt-16 text-center">
+              <div className="flex flex-col items-center gap-4 pb-6 pt-16 text-center">
                 <h2 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-violet-400 to-purple-400 bg-clip-text text-transparent">
                   Visual Relevance Feedback
                 </h2>
-                <p className="max-w-xl text-white/40 text-lg">
-                  Search with natural language, click images to mark relevant or
-                  irrelevant regions (SAM), then refine results with feedback.
+                <p className="max-w-2xl text-white/40 text-lg leading-relaxed">
+                  Search for images using natural language. Then click on objects
+                  in the results to tell the system what you want more or less of.
+                  The AI refines your search in real time.
                 </p>
+                <div className="flex flex-wrap gap-3 justify-center mt-2">
+                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
+                    SAM 3 Segmentation
+                  </span>
+                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
+                    Llama 3.2 Vision
+                  </span>
+                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
+                    SigLIP Embeddings
+                  </span>
+                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
+                    Rocchio Feedback
+                  </span>
+                </div>
               </div>
             )}
 
@@ -142,6 +157,8 @@ export default function Home() {
             <ImageGallery />
 
             <FeedbackPanel onApply={handleApplyFeedback} />
+
+            <CaptionPanel />
           </div>
         )}
 

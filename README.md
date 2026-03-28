@@ -1,177 +1,280 @@
-# VisualReF: Visual Relevance Feedback Prototype for Interactive Image Retrieval
+# VisualReF — Visual Relevance Feedback for Interactive Image Retrieval
 
-This is an official implementation of the demo paper "VisualReF: Visual Relevance Feedback Prototype for Interactive Image Retrieval" presented at Recsys'25.
+Prototype from the RecSys ’25 demo paper: users search with natural language, click on image regions to mark what they want more or less of (SAM 3 segmentation), and optionally use **Ollama + Llama 3.2 Vision** to auto-caption those regions. Feedback updates the query with **Rocchio**-style refinement over **SigLIP** embeddings and a **FAISS** index.
 
-VisualReFis the prototype of an interactive image search system based on visual relevance feedback.
+**Stack today:** FastAPI backend (`server/`) · Next.js 16 frontend (`client-next/`) · SigLIP retrieval · SAM 3 · Ollama `llama3.2-vision`.
 
-The system that uses relevance feedback provided by the user to improve the search results. Specifically, the user can annotate the relevance and irrelevance of the retrieved images. These annotations are then used by image captioning model (currently, LLaVA-1.5 7b) to generate captions for image fragments from relevance feedback. These captions are then used to refine the search results using Rocchio's algorithm.
+---
 
-Bibtex:
-```
+## Citation
+
+```bibtex
 @inproceedings{10.1145/3705328.3759341,
-author = {Khaertdinov, Bulat and Popa, Mirela and Tintarev, Nava},
-title = {VisualReF: Interactive Image Search Prototype with Visual Relevance Feedback},
-year = {2025},
-isbn = {9798400713644},
-publisher = {Association for Computing Machinery},
-address = {New York, NY, USA},
-url = {https://doi.org/10.1145/3705328.3759341},
-doi = {10.1145/3705328.3759341},
-booktitle = {Proceedings of the Nineteenth ACM Conference on Recommender Systems},
-pages = {1353–1356},
-numpages = {4},
-location = {
-},
-series = {RecSys '25}
+  author    = {Khaertdinov, Bulat and Popa, Mirela and Tintarev, Nava},
+  title     = {{VisualReF}: Interactive Image Search Prototype with Visual Relevance Feedback},
+  year      = {2025},
+  publisher = {Association for Computing Machinery},
+  doi       = {10.1145/3705328.3759341},
+  booktitle = {Proceedings of the Nineteenth {ACM} Conference on Recommender Systems},
+  series    = {RecSys '25}
 }
 ```
 
-## Example of the use case:
-(a) Input query and retrieved images:
+Example figures: `./assets/`.
 
-![](assets/a.png)
+---
 
-(b) User annotates the relevance and irrelevance of the retrieved images and the system returns the explanation of the relevance (captioning results)
+## Repository layout
 
-![](assets/b.png)
+| Path | Role |
+|------|------|
+| `start.sh` | **Main entry:** starts FastAPI (port 8001) + Next.js (port 3000), health checks |
+| `server/` | Python backend: SigLIP, FAISS, SAM 3, Ollama client, `/search`, `/segment`, `/apply_feedback`, `/caption`, `/health` |
+| `server/.env` | **Required:** dataset config path, FAISS index path, Ollama URL/model, `SAM_BACKEND=sam3` |
+| `server/sam3/` | SAM 3 package (clone + `pip install -e .`; often gitignored — run `scripts/setup_models.sh`) |
+| `server/venv/` | Python virtualenv (you create this; not committed) |
+| `client-next/` | Next.js UI; proxies `/api/*` to the backend via `NEXT_PUBLIC_SERVER_URL` |
+| `configs/demo/*.yaml` | Retrieval settings: model id, `IMG_SIZE`, corpus hints |
+| `data/` | **Your image files** (not in git): e.g. `data/coco/val2014/*.jpg` |
+| `faiss/` | **Built artifacts:** per-dataset folders with `image_index.faiss` + `image_paths.txt` |
+| `scripts/setup_models.sh` | Installs SAM 3 from `server/sam3`, checks Ollama, pulls `llama3.2-vision` |
+| `scripts/build_index.sh` | Builds FAISS index from a folder of images (SigLIP or CLIP) |
+| `scripts/build_all_indexes.sh` | Runs `build_index.sh` for every dataset present under `data/` + combined |
+| `deploy/` | Cloud GPU notes (`DEPLOY.md`), `setup-cloud.sh`, optional `Dockerfile` |
 
-(c) User launches the refinement process and gets the updated search results:
+Legacy Gradio client, Docker Compose, and old launch scripts were removed; this README describes the supported path only.
 
-![](assets/c.png)
+---
 
-Check more examples in the `./assets` folder.
+## Prerequisites
 
-## Configs:
-- Captioning model and prompts: `configs/captioning/`. Prompts used to generate captions can be changed based on the use case and level of detail required. Advanced prompting techniques can be used to improve the quality of the captions.
-- Demo: `configs/demo/`. Configs for the demo app: retrieval backbone (CLIP and SigLIP are currently supported), image database, and captioning model.
+| Requirement | Notes |
+|-------------|--------|
+| **Python** | 3.10–3.12 recommended (3.11 used in development) |
+| **Node.js** | 18+ (for Next.js) |
+| **Disk** | Plan for datasets + HF cache + Ollama model (SAM 3 and SigLIP download from Hugging Face; `llama3.2-vision` is multi‑GB via Ollama) |
+| **GPU** | Optional but strongly recommended: CUDA (Linux/Windows) or Apple **MPS** (macOS). CPU works but is slow for indexing and SAM 3 |
+| **Ollama** | Optional for vision captions: [ollama.com](https://ollama.com) — install and `ollama pull llama3.2-vision` |
+| **Hugging Face** | SAM 3 may be gated: log in with `huggingface-cli login` if downloads fail |
 
-## Getting started
+---
 
-The prototype is implemented using Gradio, PyTorch, and Hugging Face. It supports CPU and GPU, with a GPU (16+ GB VRAM) recommended for faster inference.
+## End-to-end: clone → run
 
-Python version: 3.11
+### 1. Clone
 
-We use `venv` for managing project dependencies.
-
+```bash
+git clone <your-fork-or-upstream-url> visualref
+cd visualref
 ```
-python -m venv venv
-source venv/bin/activate
+
+### 2. Image data layout
+
+The indexer walks a directory tree and collects `jpg` / `png` (case variants). Put corpora under **`data/`** at the repo root (create the folder if needed).
+
+**COCO (example — val2014 only):**
+
+```text
+data/
+└── coco/
+    └── val2014/
+        ├── COCO_val2014_000000000042.jpg
+        └── ...
+```
+
+**Visual Genome:**
+
+```text
+data/
+└── visual_genome/
+    └── …/*.jpg
+```
+
+**Retail (example):**
+
+```text
+data/
+└── retail/
+    └── …/*.jpg
+```
+
+Paths written into `image_paths.txt` during indexing must still exist when you run the server (the API opens files by path).
+
+### 3. Python environment (backend)
+
+```bash
+cd server
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Data
+### 4. SAM 3 (segmentation)
 
-We use two open-source datasets as use-cases for our demo:
+From the **repository root**:
 
-1. General image search with COCO dataset:
+```bash
+bash scripts/setup_models.sh
+```
 
-    Data preparation: 
-    ```
-    mkdir data
-    mkdir data/coco
+This clones/installs `server/sam3` if needed (`pip install -e .`) and pulls **Llama 3.2 Vision** via Ollama. If `server/sam3` is missing and the script clones it, ensure you have **git** and (for gated models) **Hugging Face** access.
 
-    cd data
-    wget http://images.cocodataset.org/zips/train2014.zip
-    wget http://images.cocodataset.org/zips/val2014.zip
-    wget http://images.cocodataset.org/zips/test2014.zip
+Manual equivalent:
 
-    unzip train2014.zip -d coco/
-    unzip val2014.zip -d coco/
-    unzip test2014.zip -d coco/
-    ```
+```bash
+cd server/sam3
+pip install -e .
+cd ../..
+```
 
-    Build a faiss index with `clip-vit-large-patch14` for the test set:
-    ```
-    cd ./server
-    python -m src.utils.write_faiss_index \
-        --data data/coco/test2014 \
-        --output faiss/coco/ \
-        --batch_size 64 \
-        --model_family clip \
-        --model_id openai/clip-vit-large-patch14
-    ```
+### 5. Build the FAISS index
 
-    It is also possible to index the whole database (will take longer) with `--data data/coco/`.
+Still from **repository root**, with `server/venv` created:
 
-2. Retail catalogue search with Retail-786k:
-    Data preparation:
-    ```
-    wget https://zenodo.org/records/7970567/files/retail-786k_256.zip?download=1 -O retail-768k_256.zip
+```bash
+bash scripts/build_index.sh coco          # default: SigLIP
+# bash scripts/build_index.sh coco clip  # optional: CLIP + matching yaml in configs/demo
+```
 
-    unzip retail-786k_256.zip -d data/
-    ```
+Outputs (SigLIP example):
 
-    Build faiss index with `clip-vit-large-patch14`:
-    ```
-    cd ./server
-    python -m src.utils.write_faiss_index \
-        --data data/retail-786k_256/ \
-        --output faiss/retail/test \
-        --batch_size 64 \
-        --model_family clip \
-        --model_id openai/clip-vit-large-patch14
-    ```
+```text
+faiss/coco/google/siglip-large-patch16-256/
+├── image_index.faiss
+└── image_paths.txt
+```
 
-## Launch the prototype
+Each line in `image_paths.txt` is an **absolute** path to an image file.
 
-The prorotype has two versions:
-    - **Pure visual feedback.** In this case user feedback is processed directly from the visual modality.
-    - **GenAI feedback.** This version use Llava-1.5-7b to caption (ir)relevant image segments to run relev
+To build everything you have under `data/` plus a combined index:
 
-For each version, we have a separate client (gradio interface) and retrieval server services (overall, 4 services). Each of them is running in separate Docker containers and communicating via an API.
+```bash
+bash scripts/build_all_indexes.sh
+```
 
-### 1. Quickstart with Docker Compose
+### 6. Configure `server/.env`
 
-The recommended way to run both services is using Docker Compose. This will automatically build and launch both containers with the correct configuration and networking.
+Paths below are **relative to the `server/` directory** (as in the default template).
 
-#### Prerequisites
-- Docker and Docker Compose installed
+```env
+CONFIG_PATH=../configs/demo/coco_siglip.yaml
+INDEX_PATH=../faiss/coco/google/siglip-large-patch16-256/image_index.faiss
+LOGS_PATH=../logs
 
-#### Steps
+OLLAMA_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2-vision
+OLLAMA_ENABLED=true
 
-1. Configure your settings:
+SAM_BACKEND=sam3
+```
 
-   - Define your configuration files or edit the default ones (e.g., `configs/demo/coco_clip_large.yaml` and `configs/captioning/llava_8bit.yaml`).
-   - Set up local env file, containing URL of servers. For example, you can create `.env.local` in the root of the repo:
-   
-   ```
-    SERVER_URL=http://retrieval-server:8000
-    SERVER_VISUAL_URL=http://retrieval-server-visual:8001
-   ```
+- **`CONFIG_PATH`** — YAML that sets `VLM_MODEL_FAMILY`, `VLM_MODEL_NAME`, `IMG_SIZE`, etc. Must match the **same** SigLIP/CLIP model used to build the index.
+- **`INDEX_PATH`** — must point at `image_index.faiss` next to its `image_paths.txt` in the same folder.
 
-   Such configuration can be used for running both server and client on the same device.
+Switching datasets = change both `CONFIG_PATH` and `INDEX_PATH` to the matching pair (see `configs/demo/`).
 
-2. Build and launch services:
+### 7. Demo YAML (`configs/demo/*.yaml`)
 
-   Build the images for both server and client (Gradio UI). 
+Important keys (retrieval server):
 
-   **Pure visual feedback**. From the project root directory:
-   - Server:
-   ```
-   sh ./scripts/launch_docker_visual_server.py
-   ```
-   - Client:
-   ```
-   sh ./scripts/launch_docker_visual_client.py
-   ```
+- `VLM_MODEL_FAMILY` / `VLM_MODEL_NAME` — must match index builder.
+- `IMG_SIZE` — square resize for search thumbnails; click coordinates from the UI are in this space.
+- `IMAGE_CORPUS_PATH` / `INDEX_PATH` inside YAML — legacy hints; the running server uses **`INDEX_PATH` from `.env`** for loading FAISS.
 
-   **GenAI feedback**. From the project root directory:
-   - Server:
-   ```
-   sh ./scripts/launch_docker_llava_server.py
-   ```
-   - Client:
-   ```
-   sh ./scripts/launch_docker_llava_client.py
-   ```
+### 8. Frontend environment
 
-3. **Access the Gradio client UI**
+```bash
+cd client-next
+echo 'NEXT_PUBLIC_SERVER_URL=http://127.0.0.1:8001' > .env.local
+npm install
+cd ..
+```
 
-   Once the containers are up, open your browser and go to:
-   ```
-   http://localhost:<PORT>
-   ```
-   By default port 7862 is assigned for an interface. You can check the port in the output of the script launching client container.
+For a remote API, set `NEXT_PUBLIC_SERVER_URL` to that host (scheme + port).
 
-**Note:**
-- GPU usage in Docker requires the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
+### 9. Ollama (optional but recommended)
+
+```bash
+ollama serve    # terminal 1, or run as a service
+ollama pull llama3.2-vision
+```
+
+If Ollama is down, the backend still runs; feedback uses image embeddings only until vision is available.
+
+### 10. Start everything
+
+From the **repository root**:
+
+```bash
+chmod +x start.sh scripts/*.sh   # once
+./start.sh
+```
+
+- Backend: `http://localhost:8001` (e.g. `GET /health`, `GET /sam_status`, `GET /ollama_status`)
+- Frontend: `http://localhost:3000`
+
+First backend start can take several minutes while SigLIP and SAM 3 load and HF caches fill.
+
+---
+
+## Operations cheat sheet
+
+| Task | Command / location |
+|------|---------------------|
+| Start app | `./start.sh` |
+| Logs | `.logs/server.log`, `.logs/client.log` |
+| Rebuild index after new images | `bash scripts/build_index.sh <dataset>` |
+| Change corpus | New index + update `CONFIG_PATH` / `INDEX_PATH` in `server/.env` |
+| Ports busy | `start.sh` kills listeners on 8001 and 3000; or set `SERVER_PORT` / `CLIENT_PORT` |
+
+---
+
+## HTTP API (overview)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/search` | Text query → top‑k image paths + base64 previews |
+| POST | `/segment` | SAM 3 mask from points + optional preview-space coords |
+| POST | `/apply_feedback` | Rocchio update from SAM regions + text + optional Ollama captions |
+| POST | `/caption` | Ollama caption for one base64 image region |
+| GET | `/health`, `/sam_status`, `/ollama_status`, `/metrics` | Status |
+
+---
+
+## Troubleshooting
+
+| Symptom | What to check |
+|---------|----------------|
+| `FAISS index file not found` | `INDEX_PATH` in `server/.env`; file exists relative to `server/` |
+| `Image path does not exist` | Paths in `image_paths.txt` still valid (same machine or synced data) |
+| SAM 3 import error | `cd server/sam3 && pip install -e .` |
+| SAM 3 / HF 401 | `huggingface-cli login`; accept model terms on Hugging Face |
+| Ollama “Vision OFF” | `ollama serve` + `ollama pull llama3.2-vision` |
+| Next.js `ETIMEDOUT` / API errors | `NEXT_PUBLIC_SERVER_URL` must match where uvicorn runs |
+| Next.js lockfile warning | A `package-lock.json` outside this repo can confuse Turbopack; remove stray lockfiles or set `turbopack.root` in `client-next/next.config.ts` per Next.js docs |
+
+---
+
+## Cloud GPU
+
+See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for rsync, `deploy/setup-cloud.sh`, and running uvicorn on `0.0.0.0:8001` with the Next.js app on your laptop.
+
+Optional container build from **repo root** (adjust `COPY` paths if you customize):
+
+```bash
+docker build -f deploy/Dockerfile -t visualref-api .
+```
+
+---
+
+## Config directories (research / prompts)
+
+- `configs/demo/` — retrieval backbones (SigLIP / CLIP) and dataset defaults.
+- `configs/captioning/` — used by older LLaVA-based server paths; the current Next.js + visual server stack uses **Ollama** for captions, configured in `server/.env`.
+
+---
+
+## License
+
+See [LICENSE](LICENSE).

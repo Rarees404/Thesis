@@ -1,51 +1,42 @@
-#!/bin/bash
-# build_all_indexes.sh — Build FAISS indexes for all available datasets,
-# then build a combined index with everything.
-#
-# Usage:
-#   cd visualref/
-#   bash scripts/build_all_indexes.sh
+#!/usr/bin/env bash
+# Build FAISS indexes for every dataset present under data/, then a combined index.
+# Run from repo root:  bash scripts/build_all_indexes.sh
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_ROOT="$(cd "$SCRIPT_DIR/../../data" 2>/dev/null && pwd || echo "")"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DATA_ROOT="$ROOT_DIR/data"
 
-echo "═══ Building all FAISS indexes ═══"
+echo "Building FAISS indexes (SigLIP) for available datasets under $DATA_ROOT"
 echo ""
 
 if [ -d "$DATA_ROOT/coco/val2014" ]; then
-  echo "━━━ [1] COCO val2014 ━━━"
+  echo "━━━ COCO val2014 ━━━"
   bash "$SCRIPT_DIR/build_index.sh" coco
   echo ""
 else
-  echo "⚠ COCO val2014 not found at $DATA_ROOT/coco/val2014 — skipping"
+  echo "⚠ Skip COCO — not found at $DATA_ROOT/coco/val2014"
 fi
 
 if [ -d "$DATA_ROOT/visual_genome" ]; then
-  echo "━━━ [2] Visual Genome ━━━"
+  echo "━━━ Visual Genome ━━━"
   bash "$SCRIPT_DIR/build_index.sh" vg
   echo ""
 else
-  echo "⚠ Visual Genome not found at $DATA_ROOT/visual_genome — skipping"
+  echo "⚠ Skip Visual Genome — not found at $DATA_ROOT/visual_genome"
 fi
 
 if [ -d "$DATA_ROOT/retail" ]; then
-  echo "━━━ [3] Retail ━━━"
+  echo "━━━ Retail ━━━"
   bash "$SCRIPT_DIR/build_index.sh" retail
   echo ""
 else
-  echo "⚠ Retail not found at $DATA_ROOT/retail — skipping"
+  echo "⚠ Skip Retail — not found at $DATA_ROOT/retail"
 fi
 
-echo "━━━ [4] Combined index ━━━"
+echo "━━━ Combined ━━━"
 bash "$SCRIPT_DIR/build_index.sh" combined
 
 echo ""
-echo "═══ All indexes built ═══"
-echo ""
-echo "Available configs:"
-[ -d "$DATA_ROOT/coco/val2014" ]   && echo "  COCO:     configs/demo/coco_siglip.yaml"
-[ -d "$DATA_ROOT/visual_genome" ]  && echo "  VG:       configs/demo/vg_siglip.yaml"
-[ -d "$DATA_ROOT/retail" ]         && echo "  Retail:   configs/demo/retail_siglip.yaml"
-echo "  Combined: configs/demo/combined_siglip.yaml"
+echo "Done."

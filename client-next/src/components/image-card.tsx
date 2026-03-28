@@ -4,7 +4,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Trash2, ZoomIn, Loader2, MousePointer2 } from "lucide-react";
+import { Trash2, ZoomIn, Loader2, MousePointer2, CheckCircle2, XCircle } from "lucide-react";
 import type { ClickPoint, RetrievedImage } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
 import { segmentImage } from "@/lib/api";
@@ -35,11 +35,6 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
 
   const points = samAnnotation?.points ?? [];
 
-  /**
-   * Compute the actual rendered image rectangle inside the container when
-   * `object-contain` is applied. Returns the letterbox offset and rendered
-   * size so that canvas drawing and click mapping stay in sync.
-   */
   const getImageDisplayRect = useCallback(
     (canvasW: number, canvasH: number) => {
       if (naturalSize.w === 0 || naturalSize.h === 0) {
@@ -49,13 +44,11 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
       const containerAspect = canvasW / canvasH;
       let renderedW: number, renderedH: number, offsetX: number, offsetY: number;
       if (imgAspect > containerAspect) {
-        // wider image → fills width, letterbox top/bottom
         renderedW = canvasW;
         renderedH = canvasW / imgAspect;
         offsetX = 0;
         offsetY = (canvasH - renderedH) / 2;
       } else {
-        // taller image → fills height, letterbox left/right
         renderedH = canvasH;
         renderedW = canvasH * imgAspect;
         offsetX = (canvasW - renderedW) / 2;
@@ -126,14 +119,9 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const imgData = offCtx.createImageData(w, h);
     const data = imgData.data;
 
-    // Mask color reflects semantic label:
-    //   green  (34, 197, 94)  → at least one relevant (foreground) click
-    //   red    (220, 38, 38)  → all clicks are irrelevant (background)
     const isRelevant = (samAnnotation.points ?? []).some((p) => p.label === 1);
     const [mR, mG, mB] = isRelevant ? [34, 197, 94] : [220, 38, 38];
 
-    // COCO-convention RLE: first count is background, then alternates fg/bg.
-    // val=0 means background (skip), val=1 means foreground (draw).
     let pos = 0;
     let val = 0;
     for (const length of rle.counts) {
@@ -151,7 +139,6 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     }
     offCtx.putImageData(imgData, 0, 0);
 
-    // Draw mask aligned to the letterboxed image area, not the full container
     const { offsetX, offsetY, renderedW, renderedH } = getImageDisplayRect(imgSize.w, imgSize.h);
     ctx.drawImage(offscreen, 0, 0, w, h, offsetX, offsetY, renderedW, renderedH);
   }, [samAnnotation, imgSize, getImageDisplayRect]);
@@ -164,9 +151,6 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const rect = containerRef.current?.getBoundingClientRect();
     if (!rect || naturalSize.w === 0 || naturalSize.h === 0) return null;
 
-    // Compute the letterbox-corrected rendered image rectangle.
-    // The canvas / container may be larger than the displayed image when
-    // object-contain is applied; we must map only within the image area.
     const { offsetX, offsetY, renderedW, renderedH } = getImageDisplayRect(
       rect.width,
       rect.height
@@ -175,7 +159,6 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const imageX = e.clientX - rect.left - offsetX;
     const imageY = e.clientY - rect.top - offsetY;
 
-    // Reject clicks that land in the letterbox area outside the image
     if (imageX < 0 || imageY < 0 || imageX > renderedW || imageY > renderedH) {
       return null;
     }
@@ -234,10 +217,18 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           {loading && (
             <Badge
               variant="secondary"
-              className="text-[10px] font-mono bg-red-950/80 text-red-200 border border-red-600/30 backdrop-blur-md gap-1"
+              className="text-[10px] font-mono bg-violet-950/80 text-violet-200 border border-violet-600/30 backdrop-blur-md gap-1"
             >
               <Loader2 className="h-3 w-3 animate-spin" />
-              SEG
+              Segmenting...
+            </Badge>
+          )}
+          {samAnnotation?.score != null && !loading && (
+            <Badge
+              variant="secondary"
+              className="text-[10px] font-mono bg-black/60 text-white/60 border border-white/10 backdrop-blur-md"
+            >
+              {(samAnnotation.score * 100).toFixed(0)}% conf
             </Badge>
           )}
         </div>
@@ -249,6 +240,15 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           >
             <ZoomIn className="h-4 w-4" />
           </button>
+        )}
+
+        {showAnnotations && points.length === 0 && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            <span className="rounded-lg bg-black/70 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md border border-white/10">
+              <MousePointer2 className="inline h-3 w-3 mr-1" />
+              Click to select a region
+            </span>
+          </div>
         )}
 
         <div
@@ -290,8 +290,8 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               className="h-7 gap-1 text-xs flex-1"
               style={activeLabel === 1 ? { backgroundColor: "#22c55e" } : {}}
             >
-              <MousePointer2 className="h-3 w-3" />
-              Relevant
+              <CheckCircle2 className="h-3 w-3" />
+              I want this
             </Button>
             <Button
               size="sm"
@@ -300,8 +300,8 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               className="h-7 gap-1 text-xs flex-1"
               style={activeLabel === 0 ? { backgroundColor: "#ef4444" } : {}}
             >
-              <MousePointer2 className="h-3 w-3" />
-              Irrelevant
+              <XCircle className="h-3 w-3" />
+              Not this
             </Button>
             <Button
               size="sm"
@@ -309,11 +309,16 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               onClick={handleClear}
               className="h-7 w-7 p-0"
               disabled={points.length === 0}
-              title="Clear clicks"
+              title="Clear all selections"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </div>
+          {points.length > 0 && (
+            <p className="text-[10px] text-white/30 text-center">
+              {points.filter(p => p.label === 1).length} relevant, {points.filter(p => p.label === 0).length} irrelevant click{points.length !== 1 && "s"}
+            </p>
+          )}
         </div>
       )}
     </Card>

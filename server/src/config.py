@@ -1,4 +1,3 @@
-# server/src/config.py
 from pathlib import Path
 
 from pydantic import field_validator
@@ -19,8 +18,7 @@ class ServerSettings(BaseSettings):
     ollama_model: str = "llama3.2-vision"
     ollama_enabled: bool = True
 
-    # "auto" = try SAM3 then SAM2, "sam3" = SAM3 only, "sam2" = SAM2 only
-    sam_backend: str = "auto"
+    sam_backend: str = "sam3"
 
     @field_validator(
         "config_path",

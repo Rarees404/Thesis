@@ -11,6 +11,7 @@ import {
   Loader2,
   Eye,
   EyeOff,
+  Info,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { ollamaStatus } from "@/lib/api";
@@ -56,28 +57,38 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
       <CardHeader className="pb-4">
         <CardTitle className="flex items-center gap-2 text-base">
           <Sparkles className="h-4 w-4 text-indigo-400" />
-          Relevance Feedback
+          Refine Your Results
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-white/40">
-            Click results to segment with SAM (green = relevant, red = irrelevant).
-            {ollamaAvailable
-              ? " Vision analysis will auto-caption your selections for stronger retrieval."
-              : " Optional text hints below also steer retrieval."}
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-2">
+            <div className="flex items-start gap-2 text-sm text-white/50">
+              <Info className="h-4 w-4 mt-0.5 shrink-0 text-indigo-400" />
+              <div className="space-y-1">
+                <p className="font-medium text-white/70">How to give feedback:</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-white/40">
+                  <li><span className="text-green-400">Click on objects</span> in the images you want <span className="text-green-400">more</span> of</li>
+                  <li><span className="text-red-400">Switch to irrelevant mode</span> and click things you want <span className="text-red-400">less</span> of</li>
+                  <li>Optionally type text hints below to guide the search</li>
+                  <li>Hit <strong className="text-white/70">Apply Feedback</strong> to see improved results</li>
+                </ol>
+              </div>
+            </div>
+          </div>
           {ollamaAvailable !== null && (
             <span
-              className={`ml-3 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+              className={`flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
                 ollamaAvailable
                   ? "bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20"
                   : "bg-white/5 text-white/30 ring-1 ring-white/10"
               }`}
-              title={ollamaAvailable ? "Ollama Vision is running — SAM crops are auto-captioned" : "Ollama Vision unavailable — using image-only feedback"}
+              title={ollamaAvailable
+                ? "Ollama Vision is running — your selections are auto-captioned for better results"
+                : "Ollama Vision not running — using image embeddings only. Run: ollama serve && ollama pull llama3.2-vision"}
             >
               {ollamaAvailable ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
-              {ollamaAvailable ? "Vision ON" : "Vision OFF"}
+              {ollamaAvailable ? "AI Vision ON" : "AI Vision OFF"}
             </span>
           )}
         </div>
@@ -88,7 +99,7 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
           <div className="space-y-2">
             <label className="flex items-center gap-1.5 text-sm font-medium text-green-400">
               <ThumbsUp className="h-3.5 w-3.5" />
-              Relevant details
+              What do you want more of?
             </label>
             <VanishInput
               placeholders={[
@@ -107,7 +118,7 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
           <div className="space-y-2">
             <label className="flex items-center gap-1.5 text-sm font-medium text-red-400">
               <ThumbsDown className="h-3.5 w-3.5" />
-              Irrelevant details
+              What do you want less of?
             </label>
             <VanishInput
               placeholders={[
@@ -134,7 +145,7 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
             className="h-4 w-4 rounded border-white/20 bg-white/5 accent-indigo-500"
           />
           <label htmlFor="fuse-query" className="text-sm text-white/40">
-            Fuse with initial query (prevents drift across multiple rounds)
+            Keep original search in mind (prevents drift across multiple rounds)
           </label>
         </div>
 
@@ -142,7 +153,7 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
           <div className="flex gap-3 text-xs text-white/30">
             {samCount > 0 && (
               <span className="text-indigo-400">
-                {samCount} SAM mask{samCount !== 1 && "s"}
+                {samCount} region{samCount !== 1 && "s"} selected
               </span>
             )}
             {totalBoxes > 0 && (

@@ -3,6 +3,7 @@ import os
 import time
 import platform
 import subprocess
+from io import BytesIO
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
@@ -17,7 +18,7 @@ from PIL import Image as PILImage
 from src.config import settings
 from src.services.retrieval_service import RetrievalServiceVisual
 from src.models.sam import build_segmenter, apply_mask, mask_to_rle, image_to_b64 as sam_img_to_b64
-from src.models.ollama_vision import check_ollama
+from src.models.ollama_vision import check_ollama, caption_crop
 from src.utils.image_utils import image_to_base64
 from src.utils.utils import load_yaml
 
@@ -90,6 +91,18 @@ class SegmentResponse(BaseModel):
     score: float
     width: int
     height: int
+
+
+class CaptionRequest(BaseModel):
+    image_b64: str
+    query: str
+    label: str = "Relevant"
+
+
+class CaptionResponse(BaseModel):
+    caption: Optional[str]
+    model: str
+    latency_ms: int
 
 
 retrieval_service: Optional[RetrievalServiceVisual] = None
@@ -246,6 +259,37 @@ async def segment_image(request: SegmentRequest):
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/caption", response_model=CaptionResponse)
+async def caption_image(request: CaptionRequest):
+    if not ollama_available:
+        raise HTTPException(status_code=503, detail="Ollama Vision is not available")
+    try:
+        import base64 as b64mod
+        img_bytes = b64mod.b64decode(request.image_b64)
+        img = PILImage.open(BytesIO(img_bytes)).convert("RGB")
+
+        start = time.time()
+        caption = caption_crop(
+            image=img,
+            query=request.query,
+            label=request.label,
+            url=settings.ollama_url,
+            model=settings.ollama_model,
+            timeout=30.0,
+        )
+        elapsed_ms = int((time.time() - start) * 1000)
+
+        return CaptionResponse(
+            caption=caption,
+            model=settings.ollama_model,
+            latency_ms=elapsed_ms,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

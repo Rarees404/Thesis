@@ -1,16 +1,21 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import * as THREE from "three";
 
-interface Neuron {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  soma: number;
-  hue: number;
+const NEURON_COUNT = 120;
+const CONNECTION_DIST = 2.8;
+const SIGNAL_CHANCE = 0.002;
+const PULSE_SPEED = 0.6;
+const CAMERA_DIST = 9;
+const DRIFT_SPEED = 0.00012;
+
+interface NeuronNode {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
   phase: number;
   pulseSpeed: number;
+  baseScale: number;
 }
 
 interface Signal {
@@ -18,217 +23,225 @@ interface Signal {
   to: number;
   t: number;
   speed: number;
-  hue: number;
 }
 
 export function NeuralBackground() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const cleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-    let w = 0;
-    let h = 0;
-    let frame = 0;
-    const NEURON_COUNT = 80;
-    const CONNECT_DIST = 200;
-    const SIGNAL_CHANCE = 0.003;
-    const neurons: Neuron[] = [];
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x000000, 0.06);
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 0, CAMERA_DIST);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setClearColor(0x000000, 1);
+    container.appendChild(renderer.domElement);
+
+    const neurons: NeuronNode[] = [];
     const signals: Signal[] = [];
 
-    function resize() {
-      w = canvas!.width = window.innerWidth;
-      h = canvas!.height = window.innerHeight;
+    const somaGeometry = new THREE.SphereGeometry(1, 16, 12);
+    const somaMaterial = new THREE.MeshBasicMaterial({ color: 0x8b5cf6, transparent: true, opacity: 0.9 });
+    const somaMeshes: THREE.Mesh[] = [];
+
+    const glowGeometry = new THREE.SphereGeometry(1, 12, 8);
+    const glowMaterial = new THREE.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.15, side: THREE.BackSide });
+    const glowMeshes: THREE.Mesh[] = [];
+
+    const spread = 7;
+    for (let i = 0; i < NEURON_COUNT; i++) {
+      const pos = new THREE.Vector3(
+        (Math.random() - 0.5) * spread * 2,
+        (Math.random() - 0.5) * spread * 2,
+        (Math.random() - 0.5) * spread * 2
+      );
+      const vel = new THREE.Vector3(
+        (Math.random() - 0.5) * DRIFT_SPEED,
+        (Math.random() - 0.5) * DRIFT_SPEED,
+        (Math.random() - 0.5) * DRIFT_SPEED
+      );
+
+      neurons.push({
+        position: pos,
+        velocity: vel,
+        phase: Math.random() * Math.PI * 2,
+        pulseSpeed: 0.01 + Math.random() * 0.015,
+        baseScale: 0.04 + Math.random() * 0.03,
+      });
+
+      const soma = new THREE.Mesh(somaGeometry, somaMaterial.clone());
+      soma.position.copy(pos);
+      soma.scale.setScalar(neurons[i].baseScale);
+      scene.add(soma);
+      somaMeshes.push(soma);
+
+      const glow = new THREE.Mesh(glowGeometry, glowMaterial.clone());
+      glow.position.copy(pos);
+      glow.scale.setScalar(neurons[i].baseScale * 4);
+      scene.add(glow);
+      glowMeshes.push(glow);
     }
 
-    function seed() {
-      resize();
-      neurons.length = 0;
-      for (let i = 0; i < NEURON_COUNT; i++) {
-        neurons.push({
-          x: Math.random() * w,
-          y: Math.random() * h,
-          vx: (Math.random() - 0.5) * 0.35,
-          vy: (Math.random() - 0.5) * 0.35,
-          soma: 2.5 + Math.random() * 2,
-          hue: 220 + Math.random() * 80,
-          phase: Math.random() * Math.PI * 2,
-          pulseSpeed: 0.015 + Math.random() * 0.02,
-        });
-      }
+    const linePositions = new Float32Array(NEURON_COUNT * NEURON_COUNT * 6);
+    const lineColors = new Float32Array(NEURON_COUNT * NEURON_COUNT * 6);
+    const lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute("position", new THREE.BufferAttribute(linePositions, 3));
+    lineGeometry.setAttribute("color", new THREE.BufferAttribute(lineColors, 3));
+    const lineMaterial = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.4 });
+    const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+    scene.add(lines);
+
+    const signalGeometry = new THREE.SphereGeometry(0.03, 8, 6);
+    const signalMaterial = new THREE.MeshBasicMaterial({ color: 0xc4b5fd, transparent: true, opacity: 0.95 });
+    const signalPool: THREE.Mesh[] = [];
+    const MAX_SIGNALS = 80;
+    for (let i = 0; i < MAX_SIGNALS; i++) {
+      const m = new THREE.Mesh(signalGeometry, signalMaterial.clone());
+      m.visible = false;
+      scene.add(m);
+      signalPool.push(m);
     }
 
-    function drawDendrite(
-      ax: number,
-      ay: number,
-      bx: number,
-      by: number,
-      alpha: number,
-      hueA: number,
-      hueB: number,
-      width: number
-    ) {
-      const mx = (ax + bx) / 2;
-      const my = (ay + by) / 2;
-      const dx = bx - ax;
-      const dy = by - ay;
-      const perpX = -dy * 0.12;
-      const perpY = dx * 0.12;
-      const cpx = mx + perpX;
-      const cpy = my + perpY;
+    let frame = 0;
+    let animId = 0;
+    const clock = new THREE.Clock();
 
-      const grad = ctx!.createLinearGradient(ax, ay, bx, by);
-      grad.addColorStop(0, `hsla(${hueA}, 70%, 60%, ${alpha})`);
-      grad.addColorStop(0.5, `hsla(${(hueA + hueB) / 2}, 60%, 55%, ${alpha * 0.7})`);
-      grad.addColorStop(1, `hsla(${hueB}, 70%, 60%, ${alpha})`);
-
-      ctx!.beginPath();
-      ctx!.moveTo(ax, ay);
-      ctx!.quadraticCurveTo(cpx, cpy, bx, by);
-      ctx!.strokeStyle = grad;
-      ctx!.lineWidth = width;
-      ctx!.stroke();
-    }
-
-    function drawSoma(n: Neuron, pulse: number) {
-      const r = Math.max(n.soma * pulse, 0.5);
-      const glowR = r * 5;
-
-      const glow = ctx!.createRadialGradient(n.x, n.y, 0, n.x, n.y, glowR);
-      glow.addColorStop(0, `hsla(${n.hue}, 80%, 70%, 0.5)`);
-      glow.addColorStop(0.3, `hsla(${n.hue}, 70%, 55%, 0.12)`);
-      glow.addColorStop(1, `hsla(${n.hue}, 70%, 50%, 0)`);
-      ctx!.fillStyle = glow;
-      ctx!.beginPath();
-      ctx!.arc(n.x, n.y, glowR, 0, Math.PI * 2);
-      ctx!.fill();
-
-      const inner = ctx!.createRadialGradient(n.x, n.y, 0, n.x, n.y, r);
-      inner.addColorStop(0, `hsla(${n.hue}, 90%, 85%, 0.95)`);
-      inner.addColorStop(0.6, `hsla(${n.hue}, 80%, 65%, 0.8)`);
-      inner.addColorStop(1, `hsla(${n.hue}, 70%, 50%, 0.4)`);
-      ctx!.fillStyle = inner;
-      ctx!.beginPath();
-      ctx!.arc(n.x, n.y, r, 0, Math.PI * 2);
-      ctx!.fill();
-    }
-
-    function drawSignal(sig: Signal) {
-      const a = neurons[sig.from];
-      const b = neurons[sig.to];
-      if (!a || !b) return;
-
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const cpx = mx + (-dy * 0.12);
-      const cpy = my + (dx * 0.12);
-
-      const t = sig.t;
-      const sx = (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * cpx + t * t * b.x;
-      const sy = (1 - t) * (1 - t) * a.y + 2 * (1 - t) * t * cpy + t * t * b.y;
-
-      const pulseR = 4 + Math.sin(t * Math.PI) * 3;
-      const glow = ctx!.createRadialGradient(sx, sy, 0, sx, sy, pulseR * 3);
-      glow.addColorStop(0, `hsla(${sig.hue}, 90%, 80%, 0.9)`);
-      glow.addColorStop(0.4, `hsla(${sig.hue}, 80%, 60%, 0.3)`);
-      glow.addColorStop(1, `hsla(${sig.hue}, 70%, 50%, 0)`);
-      ctx!.fillStyle = glow;
-      ctx!.beginPath();
-      ctx!.arc(sx, sy, pulseR * 3, 0, Math.PI * 2);
-      ctx!.fill();
-
-      ctx!.fillStyle = `hsla(${sig.hue}, 95%, 90%, 1)`;
-      ctx!.beginPath();
-      ctx!.arc(sx, sy, 2, 0, Math.PI * 2);
-      ctx!.fill();
-    }
-
-    function tick() {
+    function animate() {
+      animId = requestAnimationFrame(animate);
+      const dt = clock.getDelta();
       frame++;
 
-      ctx!.fillStyle = "rgba(6, 6, 18, 0.15)";
-      ctx!.fillRect(0, 0, w, h);
+      const time = frame * 0.01;
+      camera.position.x = Math.sin(time * 0.15) * 1.5;
+      camera.position.y = Math.cos(time * 0.1) * 1.0;
+      camera.lookAt(0, 0, 0);
 
-      for (let i = 0; i < neurons.length; i++) {
+      let lineIdx = 0;
+      for (let i = 0; i < NEURON_COUNT; i++) {
         const n = neurons[i];
-        n.x += n.vx;
-        n.y += n.vy;
-        if (n.x < -20) n.x = w + 20;
-        if (n.x > w + 20) n.x = -20;
-        if (n.y < -20) n.y = h + 20;
-        if (n.y > h + 20) n.y = -20;
-      }
+        n.position.add(n.velocity);
 
-      for (let i = 0; i < neurons.length; i++) {
-        const a = neurons[i];
-        for (let j = i + 1; j < neurons.length; j++) {
-          const b = neurons[j];
-          const dx = a.x - b.x;
-          const dy = a.y - b.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < CONNECT_DIST) {
-            const strength = 1 - dist / CONNECT_DIST;
-            const alpha = strength * 0.28;
-            drawDendrite(a.x, a.y, b.x, b.y, alpha, a.hue, b.hue, strength * 1.8);
+        const bound = spread;
+        if (n.position.x < -bound || n.position.x > bound) n.velocity.x *= -1;
+        if (n.position.y < -bound || n.position.y > bound) n.velocity.y *= -1;
+        if (n.position.z < -bound || n.position.z > bound) n.velocity.z *= -1;
 
-            if (Math.random() < SIGNAL_CHANCE * strength) {
+        const pulse = 0.85 + Math.sin(frame * n.pulseSpeed + n.phase) * 0.15;
+        somaMeshes[i].position.copy(n.position);
+        somaMeshes[i].scale.setScalar(n.baseScale * pulse);
+        glowMeshes[i].position.copy(n.position);
+        glowMeshes[i].scale.setScalar(n.baseScale * pulse * 5);
+
+        for (let j = i + 1; j < NEURON_COUNT; j++) {
+          const dist = n.position.distanceTo(neurons[j].position);
+          if (dist < CONNECTION_DIST) {
+            const strength = 1 - dist / CONNECTION_DIST;
+            const idx = lineIdx * 6;
+
+            linePositions[idx] = n.position.x;
+            linePositions[idx + 1] = n.position.y;
+            linePositions[idx + 2] = n.position.z;
+            linePositions[idx + 3] = neurons[j].position.x;
+            linePositions[idx + 4] = neurons[j].position.y;
+            linePositions[idx + 5] = neurons[j].position.z;
+
+            const r = 0.35 * strength;
+            const g = 0.22 * strength;
+            const b = 0.85 * strength;
+            lineColors[idx] = r;
+            lineColors[idx + 1] = g;
+            lineColors[idx + 2] = b;
+            lineColors[idx + 3] = r;
+            lineColors[idx + 4] = g;
+            lineColors[idx + 5] = b;
+
+            lineIdx++;
+
+            if (Math.random() < SIGNAL_CHANCE * strength && signals.length < MAX_SIGNALS) {
               signals.push({
                 from: i,
                 to: j,
                 t: 0,
-                speed: 0.008 + Math.random() * 0.012,
-                hue: (a.hue + b.hue) / 2 + (Math.random() - 0.5) * 20,
+                speed: PULSE_SPEED + Math.random() * 0.4,
               });
             }
           }
         }
       }
 
+      lineGeometry.setDrawRange(0, lineIdx * 2);
+      (lineGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+      (lineGeometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+
+      signalPool.forEach((m) => (m.visible = false));
+
       for (let i = signals.length - 1; i >= 0; i--) {
         const sig = signals[i];
-        sig.t += sig.speed;
+        sig.t += dt * sig.speed;
         if (sig.t >= 1) {
           signals.splice(i, 1);
-        } else {
-          drawSignal(sig);
+          continue;
+        }
+
+        if (i < MAX_SIGNALS) {
+          const a = neurons[sig.from].position;
+          const b = neurons[sig.to].position;
+          const mesh = signalPool[i];
+          mesh.visible = true;
+          mesh.position.lerpVectors(a, b, sig.t);
+          const pulseScale = 1 + Math.sin(sig.t * Math.PI) * 1.5;
+          mesh.scale.setScalar(pulseScale);
+          (mesh.material as THREE.MeshBasicMaterial).opacity = Math.sin(sig.t * Math.PI) * 0.95;
         }
       }
 
-      for (const n of neurons) {
-        const pulse = 0.85 + Math.sin(frame * n.pulseSpeed + n.phase) * 0.15;
-        drawSoma(n, pulse);
-      }
-
-      animRef.current = requestAnimationFrame(tick);
+      renderer.render(scene, camera);
     }
 
-    seed();
-    ctx.fillStyle = "rgb(6, 6, 18)";
-    ctx.fillRect(0, 0, w, h);
-    tick();
+    animate();
 
-    const handleResize = () => {
-      resize();
-      ctx!.fillStyle = "rgb(6, 6, 18)";
-      ctx!.fillRect(0, 0, w, h);
-    };
+    function handleResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
     window.addEventListener("resize", handleResize);
-    return () => {
+
+    cleanupRef.current = () => {
       window.removeEventListener("resize", handleResize);
-      cancelAnimationFrame(animRef.current);
+      cancelAnimationFrame(animId);
+      renderer.dispose();
+      somaGeometry.dispose();
+      somaMaterial.dispose();
+      glowGeometry.dispose();
+      glowMaterial.dispose();
+      signalGeometry.dispose();
+      signalMaterial.dispose();
+      lineGeometry.dispose();
+      lineMaterial.dispose();
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
+    };
+
+    return () => {
+      cleanupRef.current?.();
     };
   }, []);
 
   return (
-    <canvas
-      ref={canvasRef}
+    <div
+      ref={containerRef}
       className="pointer-events-none fixed inset-0 z-0"
+      aria-hidden="true"
     />
   );
 }

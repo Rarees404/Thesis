@@ -107,11 +107,11 @@ Same steps, but use [runpod.io](https://www.runpod.io/):
 
 ---
 
-## To switch back to local (SAM2)
+## To run locally
 
 Edit `server/.env`:
 ```
-SAM_BACKEND=sam2
+SAM_BACKEND=sam3
 ```
 
 Run locally with `./start.sh` as before.
