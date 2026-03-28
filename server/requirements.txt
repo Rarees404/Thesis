@@ -1,13 +1,15 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 httpx==0.25.2
-torch==2.1.2
+# 2.1.x no longer published for many Python/CUDA combos; 2.2.2 matches PyPI on Linux GPU images
+torch==2.2.2
 transformers==4.48.3
 faiss-cpu==1.11.0
-numpy==1.25.2
+# 1.25.x has no py3.12 wheels; building from source hits setuptools/pkgutil errors
+numpy==1.26.4
 pillow==11.1.0
 scipy==1.15.1
-scikit-learn==1.2.2
+scikit-learn==1.5.2
 tqdm==4.67.1
 protobuf==6.30.2
 datasets==3.3.2

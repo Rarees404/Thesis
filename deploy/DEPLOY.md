@@ -34,6 +34,22 @@ Vast.ai gives you an SSH command like:
 ssh -p 12345 root@ssh5.vast.ai
 ```
 
+### On-server download + index (no Mac copy)
+
+From `/workspace/visualref` on the GPU:
+
+```bash
+chmod +x scripts/download_datasets.sh scripts/build_index.sh scripts/build_all_indexes.sh
+bash scripts/download_datasets.sh
+# Blackwell / unsupported CUDA: force CPU for embedding (slow but works):
+# DEVICE=cpu bash scripts/build_index.sh coco
+bash scripts/build_index.sh coco
+```
+
+Optional: `bash scripts/download_datasets.sh --with-vg` (large). Then `bash scripts/build_all_indexes.sh`.
+
+---
+
 ### Step 4: Upload your project + data
 From your Mac terminal:
 ```bash

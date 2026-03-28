@@ -117,6 +117,12 @@ def main():
     # Get all image paths
     image_paths = get_image_paths(args.data)
     print(f"Found {len(image_paths)} images")
+    if not image_paths:
+        raise SystemExit(
+            f"No images found under {args.data!r}. "
+            "Check DATA_ROOT (default: <workspace>/data). "
+            "Run: bash scripts/download_datasets.sh"
+        )
 
     model_config = get_model_config(args.model_family, args.model_id)
 

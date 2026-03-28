@@ -61,21 +61,29 @@ ok "Copied cloud .env (SAM_BACKEND=sam3)"
 # ── 5. Check data ──
 hdr "[5/6] Checking data files"
 FAISS_PATH="$ROOT_DIR/faiss/coco/google/siglip-large-patch16-256/image_index.faiss"
-DATA_PATH="$ROOT_DIR/data/coco/val2014"
+# image_paths.txt uses ../../data/... relative to server/ → sibling of visualref (e.g. /workspace/data)
+WORKSPACE="$(dirname "$ROOT_DIR")"
+DATA_PATH_WORKSPACE="$WORKSPACE/data/coco/val2014"
+DATA_PATH_IN_REPO="$ROOT_DIR/data/coco/val2014"
 
 if [ -f "$FAISS_PATH" ]; then
     ok "FAISS index found ($(du -sh "$FAISS_PATH" | cut -f1))"
 else
     echo "  ✗ FAISS index missing at: $FAISS_PATH"
-    echo "    Upload it: scp -r faiss/ user@cloud-ip:/path/to/visualref/"
+    echo "    Upload: rsync -avz faiss/ user@host:/workspace/visualref/faiss/"
 fi
 
-if [ -d "$DATA_PATH" ]; then
-    COUNT=$(ls "$DATA_PATH" | wc -l)
-    ok "COCO val2014 found ($COUNT images)"
+if [ -d "$DATA_PATH_WORKSPACE" ]; then
+    COUNT=$(find "$DATA_PATH_WORKSPACE" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    ok "COCO val2014 found at $DATA_PATH_WORKSPACE (~$COUNT files at top level)"
+elif [ -d "$DATA_PATH_IN_REPO" ]; then
+    COUNT=$(find "$DATA_PATH_IN_REPO" -maxdepth 1 -type f 2>/dev/null | wc -l)
+    ok "COCO val2014 found at $DATA_PATH_IN_REPO (~$COUNT files at top level)"
 else
-    echo "  ✗ COCO images missing at: $DATA_PATH"
-    echo "    Upload: scp -r data/ user@cloud-ip:/path/to/visualref/"
+    echo "  ✗ COCO val2014 not found at:"
+    echo "      $DATA_PATH_WORKSPACE   (recommended: /workspace/data/...)"
+    echo "      $DATA_PATH_IN_REPO"
+    echo "    Upload: rsync -avz data/coco/val2014/ user@host:/workspace/data/coco/val2014/"
 fi
 
 # ── 6. Install & start Ollama ──

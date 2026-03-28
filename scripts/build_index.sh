@@ -8,7 +8,8 @@
 # Datasets:
 #   coco         — COCO val2014 (~40K images)
 #   vg           — Visual Genome (~108K images)
-#   retail       — Retail product images
+#   retail       — data/retail (RP2K, etc.)
+#   retail786k   — data/retail786k (Retail-786k 256px)
 #   combined     — All datasets merged into one index
 #
 # Models:
@@ -23,6 +24,12 @@
 #   bash scripts/build_index.sh coco clip
 
 set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WORKSPACE="$(cd "$REPO_ROOT/.." && pwd)"
+# Images live next to the repo: /workspace/data/... when repo is /workspace/visualref
+DATA_ROOT="${DATA_ROOT:-$WORKSPACE/data}"
 
 DATASET=${1:-coco}
 MODEL=${2:-siglip}
@@ -40,8 +47,10 @@ else
   exit 1
 fi
 
-# Detect device
-if python3 -c "import torch; exit(0 if torch.backends.mps.is_available() else 1)" 2>/dev/null; then
+# Detect device (override: DEVICE=cpu bash ... for GPUs PyTorch does not support yet, e.g. sm_120)
+if [ -n "${DEVICE:-}" ]; then
+  :
+elif python3 -c "import torch; exit(0 if torch.backends.mps.is_available() else 1)" 2>/dev/null; then
   DEVICE="mps"
 elif python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
   DEVICE="cuda"
@@ -49,20 +58,22 @@ else
   DEVICE="cpu"
 fi
 
-DATA_ROOT="../../data"
-
 case "$DATASET" in
   coco)
     DATA_PATHS="$DATA_ROOT/coco/val2014"
-    OUTPUT_DIR="../faiss/coco"
+    OUTPUT_DIR="$REPO_ROOT/faiss/coco"
     ;;
   vg)
     DATA_PATHS="$DATA_ROOT/visual_genome"
-    OUTPUT_DIR="../faiss/visual_genome"
+    OUTPUT_DIR="$REPO_ROOT/faiss/visual_genome"
     ;;
   retail)
     DATA_PATHS="$DATA_ROOT/retail"
-    OUTPUT_DIR="../faiss/retail"
+    OUTPUT_DIR="$REPO_ROOT/faiss/retail"
+    ;;
+  retail786k)
+    DATA_PATHS="$DATA_ROOT/retail786k"
+    OUTPUT_DIR="$REPO_ROOT/faiss/retail786k"
     ;;
   combined)
     # For combined, we pass a temp directory with symlinks to all datasets
@@ -70,7 +81,7 @@ case "$DATASET" in
     trap "rm -rf $COMBINED_TMP" EXIT
 
     echo "Creating combined dataset from all available sources..."
-    for src in "$DATA_ROOT/coco/val2014" "$DATA_ROOT/visual_genome" "$DATA_ROOT/retail"; do
+    for src in "$DATA_ROOT/coco/val2014" "$DATA_ROOT/visual_genome" "$DATA_ROOT/retail" "$DATA_ROOT/retail786k"; do
       if [ -d "$src" ]; then
         BASENAME=$(basename "$src")
         PARENT=$(basename "$(dirname "$src")")
@@ -83,11 +94,11 @@ case "$DATASET" in
     done
 
     DATA_PATHS="$COMBINED_TMP"
-    OUTPUT_DIR="../faiss/combined"
+    OUTPUT_DIR="$REPO_ROOT/faiss/combined"
     ;;
   *)
     echo "Unknown dataset: $DATASET"
-    echo "Options: coco, vg, retail, combined"
+    echo "Options: coco, vg, retail, retail786k, combined"
     exit 1
     ;;
 esac
@@ -102,7 +113,7 @@ echo "  Device:  $DEVICE"
 echo "  Batches: $BATCH_SIZE"
 echo ""
 
-cd server
+cd "$REPO_ROOT/server"
 
 python -m src.utils.write_faiss_index \
   --data "$DATA_PATHS" \
@@ -117,14 +128,15 @@ echo "Done! Index saved to $OUTPUT_DIR/$MODEL_ID/"
 echo ""
 
 case "$DATASET" in
-  coco)     CFG="coco_siglip" ;;
-  vg)       CFG="vg_siglip" ;;
-  retail)   CFG="retail_siglip" ;;
-  combined) CFG="combined_siglip" ;;
+  coco)        CFG="coco_siglip"; FAISS_SUB="coco" ;;
+  vg)          CFG="vg_siglip"; FAISS_SUB="visual_genome" ;;
+  retail)      CFG="retail_siglip"; FAISS_SUB="retail" ;;
+  retail786k)  CFG="retail786k_siglip"; FAISS_SUB="retail786k" ;;
+  combined)    CFG="combined_siglip"; FAISS_SUB="combined" ;;
 esac
 
-echo "To use this index, update server/.env:"
+echo "To use this index, set in server/.env (paths relative to server/):"
 echo ""
 echo "  CONFIG_PATH=../configs/demo/${CFG}.yaml"
-echo "  INDEX_PATH=../$OUTPUT_DIR/$MODEL_ID/image_index.faiss"
+echo "  INDEX_PATH=../faiss/${FAISS_SUB}/${MODEL_ID}/image_index.faiss"
 echo ""
