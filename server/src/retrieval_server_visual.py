@@ -3,8 +3,9 @@ import os
 import time
 import platform
 import subprocess
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 
+import numpy as np
 import psutil
 import torch
 from fastapi import FastAPI, HTTPException
@@ -16,6 +17,7 @@ from PIL import Image as PILImage
 from src.config import settings
 from src.services.retrieval_service import RetrievalServiceVisual
 from src.models.sam import build_segmenter, apply_mask, mask_to_rle, image_to_b64 as sam_img_to_b64
+from src.models.ollama_vision import check_ollama
 from src.utils.image_utils import image_to_base64
 from src.utils.utils import load_yaml
 
@@ -42,6 +44,9 @@ class SearchResponse(BaseModel):
     scores: List[float]
     success: bool
     message: str
+    # Dimensions of each base64 preview (same as IMG_SIZE in config — clicks are in this space)
+    preview_width: int
+    preview_height: int
 
 
 class ProcessApplyFeedbackRequest(BaseModel):
@@ -61,6 +66,8 @@ class ProcessApplyFeedbackResponse(BaseModel):
     scores: List[float]
     success: bool
     message: str
+    preview_width: int
+    preview_height: int
 
 
 class SegmentPoint(BaseModel):
@@ -72,6 +79,9 @@ class SegmentPoint(BaseModel):
 class SegmentRequest(BaseModel):
     image_path: str
     points: List[SegmentPoint]
+    # Pixel space of click coordinates (browser naturalWidth / naturalHeight of the preview image)
+    coord_width: Optional[int] = None
+    coord_height: Optional[int] = None
 
 
 class SegmentResponse(BaseModel):
@@ -82,27 +92,33 @@ class SegmentResponse(BaseModel):
     height: int
 
 
-class SegmentTextRequest(BaseModel):
-    image_path: str
-    text_prompt: str
-
-
-class SegmentTextInstanceResponse(BaseModel):
-    mask_rle: dict
-    region_b64: str
-    score: float
-    bbox: List[float]
-
-
-class SegmentTextResponse(BaseModel):
-    instances: List[SegmentTextInstanceResponse]
-    width: int
-    height: int
-
-
 retrieval_service: Optional[RetrievalServiceVisual] = None
 sam_segmenter = None
 sam_model_type: str = "none"
+ollama_available: bool = False
+
+
+def _preview_side() -> Tuple[int, int]:
+    """Square preview size for thumbnails — must match click coordinate space from the UI."""
+    if retrieval_service is None:
+        return 224, 224
+    s = int(retrieval_service.config.get("IMG_SIZE", 224))
+    return s, s
+
+
+def _mask_to_preview_space(mask: np.ndarray, pw: int, ph: int) -> np.ndarray:
+    """Downsample a full-res boolean mask to the UI preview size."""
+    h, w = int(mask.shape[0]), int(mask.shape[1])
+    if w == pw and h == ph:
+        return mask.astype(bool)
+    pil_m = PILImage.fromarray(mask.astype(np.uint8) * 255)
+    pil_m = pil_m.resize((pw, ph), PILImage.Resampling.NEAREST)
+    return np.array(pil_m) > 127
+
+
+def _preview_like_search(full: PILImage.Image, pw: int, ph: int) -> PILImage.Image:
+    """Match `resize_images()` in retrieval_service (BICUBIC square)."""
+    return full.resize((pw, ph), PILImage.Resampling.BICUBIC)
 
 
 @app.on_event("startup")
@@ -122,13 +138,27 @@ async def startup_event():
         config=config,
         faiss_index=settings.index_path,
         device=device,
+        ollama_url=settings.ollama_url,
+        ollama_model=settings.ollama_model,
     )
 
     checkpoints_dir = os.path.normpath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "checkpoints")
     )
-    sam_segmenter, sam_model_type = build_segmenter(device=device, checkpoints_dir=checkpoints_dir)
-    print(f"[startup] SAM backend: {sam_model_type}")
+    sam_segmenter, sam_model_type = build_segmenter(
+        device=device, checkpoints_dir=checkpoints_dir, backend=settings.sam_backend,
+    )
+    print(f"[startup] SAM backend: {sam_model_type} (requested: {settings.sam_backend})")
+
+    global ollama_available
+    if settings.ollama_enabled:
+        ollama_available = check_ollama(settings.ollama_url, settings.ollama_model)
+        if ollama_available:
+            print(f"[startup] Ollama vision: available ({settings.ollama_model})")
+        else:
+            print(f"[startup] Ollama vision: not available (feedback will use image-only embeddings)")
+    else:
+        print("[startup] Ollama vision: disabled via config")
 
 
 @app.post("/search", response_model=SearchResponse)
@@ -136,12 +166,15 @@ async def search_images(request: SearchRequest):
     try:
         images, scores, image_paths = retrieval_service.search_images(request.query, request.top_k)
         images = [image_to_base64(img) for img in images]
+        pw, ph = _preview_side()
         return SearchResponse(
             images=images,
             image_paths=image_paths,
             scores=scores,
             success=True,
-            message="Search completed successfully"
+            message="Search completed successfully",
+            preview_width=pw,
+            preview_height=ph,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -158,15 +191,19 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
             irrelevant_captions=request.irrelevant_captions,
             annotator_json_boxes_list=request.annotator_json_boxes_list,
             sam_annotations=request.sam_annotations,
-            fuse_initial_query=request.fuse_initial_query
+            fuse_initial_query=request.fuse_initial_query,
+            ollama_available=ollama_available,
         )
         images = [image_to_base64(img) for img in images]
+        pw, ph = _preview_side()
         return ProcessApplyFeedbackResponse(
             images=images,
             image_paths=image_paths,
             scores=scores,
             success=True,
-            message="Feedback applied successfully"
+            message="Feedback applied successfully",
+            preview_width=pw,
+            preview_height=ph,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -178,60 +215,34 @@ async def segment_image(request: SegmentRequest):
         raise HTTPException(status_code=503, detail="No SAM model loaded")
     try:
         image = PILImage.open(request.image_path).convert("RGB")
+        W, H = image.size
+
+        # Clicks are on the search preview (e.g. 224×224), but this file is full resolution.
+        # Map preview-space coordinates → original pixels, run SAM at full res, then
+        # downsample the mask back to preview space so the overlay aligns with the UI.
+        cw = request.coord_width if request.coord_width and request.coord_width > 0 else W
+        ch = request.coord_height if request.coord_height and request.coord_height > 0 else H
+        sx = W / float(cw)
+        sy = H / float(ch)
+        scaled_points = [
+            {"x": p.x * sx, "y": p.y * sy, "label": p.label} for p in request.points
+        ]
+
         sam_segmenter.set_image(image, path=request.image_path)
+        result = sam_segmenter.segment_points(scaled_points, image_path=request.image_path)
 
-        points = [{"x": p.x, "y": p.y, "label": p.label} for p in request.points]
-        result = sam_segmenter.segment_points(points, image_path=request.image_path)
-
-        mask = result["mask"]
-        region = apply_mask(image, mask)
+        mask_full = result["mask"].astype(bool)
+        mask = _mask_to_preview_space(mask_full, cw, ch)
+        preview = _preview_like_search(image, cw, ch)
+        region = apply_mask(preview, mask)
         rle = mask_to_rle(mask)
 
         return SegmentResponse(
             mask_rle=rle,
             region_b64=sam_img_to_b64(region),
             score=result["score"],
-            width=image.width,
-            height=image.height,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/segment_text", response_model=SegmentTextResponse)
-async def segment_text(request: SegmentTextRequest):
-    """Segment all instances matching a text prompt (SAM 3 only)."""
-    if sam_segmenter is None:
-        raise HTTPException(status_code=503, detail="No SAM model loaded")
-    if sam_model_type != "sam3":
-        raise HTTPException(
-            status_code=501,
-            detail="Text prompts require SAM 3 — currently using SAM 2 (point prompts only)",
-        )
-    try:
-        image = PILImage.open(request.image_path).convert("RGB")
-        sam_segmenter.set_image(image, path=request.image_path)
-
-        instances = sam_segmenter.segment_text(request.text_prompt)
-
-        response_instances = []
-        for inst in instances:
-            mask = inst["mask"]
-            region = apply_mask(image, mask)
-            rle = mask_to_rle(mask)
-            response_instances.append(SegmentTextInstanceResponse(
-                mask_rle=rle,
-                region_b64=sam_img_to_b64(region),
-                score=inst["score"],
-                bbox=inst["bbox"],
-            ))
-
-        return SegmentTextResponse(
-            instances=response_instances,
-            width=image.width,
-            height=image.height,
+            width=cw,
+            height=ch,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
@@ -249,7 +260,20 @@ async def sam_status():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "gpu_available": torch.cuda.is_available()}
+    return {
+        "status": "healthy",
+        "gpu_available": torch.cuda.is_available(),
+        "ollama_available": ollama_available,
+    }
+
+
+@app.get("/ollama_status")
+async def ollama_status():
+    return {
+        "available": ollama_available,
+        "model": settings.ollama_model,
+        "url": settings.ollama_url,
+    }
 
 
 def _mps_gpu_util_pct() -> float:

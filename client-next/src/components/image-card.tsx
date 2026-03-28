@@ -16,7 +16,6 @@ interface ImageCardProps {
 }
 
 const POINT_COLORS = { 1: "#22c55e", 0: "#ef4444" } as const;
-const POINT_LABELS = { 1: "Relevant", 0: "Irrelevant" } as const;
 
 export function ImageCard({ image, index, showAnnotations = true }: ImageCardProps) {
   const setSamAnnotation = useAppStore((s) => s.setSamAnnotation);
@@ -127,6 +126,12 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const imgData = offCtx.createImageData(w, h);
     const data = imgData.data;
 
+    // Mask color reflects semantic label:
+    //   green  (34, 197, 94)  → at least one relevant (foreground) click
+    //   red    (220, 38, 38)  → all clicks are irrelevant (background)
+    const isRelevant = (samAnnotation.points ?? []).some((p) => p.label === 1);
+    const [mR, mG, mB] = isRelevant ? [34, 197, 94] : [220, 38, 38];
+
     // COCO-convention RLE: first count is background, then alternates fg/bg.
     // val=0 means background (skip), val=1 means foreground (draw).
     let pos = 0;
@@ -135,10 +140,10 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
       if (val === 1) {
         for (let j = 0; j < length; j++) {
           const idx = (pos + j) * 4;
-          data[idx] = 220;     // R — military red
-          data[idx + 1] = 38;  // G
-          data[idx + 2] = 38;  // B
-          data[idx + 3] = 150; // alpha — increased for visibility
+          data[idx]     = mR;
+          data[idx + 1] = mG;
+          data[idx + 2] = mB;
+          data[idx + 3] = 150;
         }
       }
       pos += length;
@@ -193,7 +198,12 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
 
     setLoading(true);
     try {
-      const result = await segmentImage(image.path, updatedPoints);
+      const result = await segmentImage(
+        image.path,
+        updatedPoints,
+        naturalSize.w,
+        naturalSize.h
+      );
       setSamAnnotation(index, {
         points: updatedPoints,
         mask_rle: result.mask_rle,
@@ -211,9 +221,6 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     clearSamAnnotation(index);
   }
 
-  const fgCount = points.filter((p) => p.label === 1).length;
-  const bgCount = points.filter((p) => p.label === 0).length;
-
   return (
     <Card className="group overflow-hidden gap-0 py-0">
       <div className="relative border-b">
@@ -224,27 +231,13 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
           >
             #{index + 1}
           </Badge>
-          <Badge
-            variant="secondary"
-            className="text-[10px] font-mono bg-black/70 text-white/80 border border-white/10 backdrop-blur-md"
-          >
-            {image.score.toFixed(4)}
-          </Badge>
           {loading && (
             <Badge
               variant="secondary"
-              className="text-[10px] font-mono bg-indigo-600/80 text-white border-0 backdrop-blur-md gap-1"
+              className="text-[10px] font-mono bg-red-950/80 text-red-200 border border-red-600/30 backdrop-blur-md gap-1"
             >
               <Loader2 className="h-3 w-3 animate-spin" />
-              SAM
-            </Badge>
-          )}
-          {samAnnotation?.score != null && !loading && (
-            <Badge
-              variant="secondary"
-              className="text-[10px] font-mono bg-indigo-600/80 text-white border-0 backdrop-blur-md"
-            >
-              {(samAnnotation.score * 100).toFixed(0)}%
+              SEG
             </Badge>
           )}
         </div>
@@ -316,17 +309,11 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
               onClick={handleClear}
               className="h-7 w-7 p-0"
               disabled={points.length === 0}
+              title="Clear clicks"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </div>
-
-          {points.length > 0 && (
-            <div className="flex gap-2 text-[10px] text-muted-foreground">
-              {fgCount > 0 && <span className="text-green-400">{fgCount} relevant click{fgCount !== 1 && "s"}</span>}
-              {bgCount > 0 && <span className="text-red-400">{bgCount} irrelevant click{bgCount !== 1 && "s"}</span>}
-            </div>
-          )}
         </div>
       )}
     </Card>

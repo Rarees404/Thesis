@@ -36,11 +36,11 @@ export function ImageGallery() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-white/40">
-          Retrieved Images
-          <span className="ml-2 text-white font-semibold">{images.length} results</span>
+          Results
+          <span className="ml-2 text-white font-semibold tabular-nums">{images.length}</span>
           {round > 1 && (
-            <span className="ml-2 text-indigo-400 font-semibold">
-              (Refinement round {round - 1})
+            <span className="ml-2 text-amber-500/90 font-mono text-xs">
+              phase {round - 1}
             </span>
           )}
         </h2>

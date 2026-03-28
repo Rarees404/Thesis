@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -8,8 +9,11 @@ import {
   ThumbsDown,
   Sparkles,
   Loader2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
+import { ollamaStatus } from "@/lib/api";
 import { VanishInput } from "@/components/ui/vanish-input";
 
 interface FeedbackPanelProps {
@@ -26,6 +30,16 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
   const fuseInitialQuery = useAppStore((s) => s.fuseInitialQuery);
   const setFuseInitialQuery = useAppStore((s) => s.setFuseInitialQuery);
   const samAnnotations = useAppStore((s) => s.samAnnotations);
+
+  const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    ollamaStatus()
+      .then((s) => { if (!cancelled) setOllamaAvailable(s.available); })
+      .catch(() => { if (!cancelled) setOllamaAvailable(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   if (images.length === 0) return null;
 
@@ -46,10 +60,27 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-white/40">
-          Click on the images above to mark relevant (green) and irrelevant (red) regions
-          using SAM segmentation. Optionally add text descriptions below to refine results.
-        </p>
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-white/40">
+            Click results to segment with SAM (green = relevant, red = irrelevant).
+            {ollamaAvailable
+              ? " Vision analysis will auto-caption your selections for stronger retrieval."
+              : " Optional text hints below also steer retrieval."}
+          </p>
+          {ollamaAvailable !== null && (
+            <span
+              className={`ml-3 flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${
+                ollamaAvailable
+                  ? "bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-500/20"
+                  : "bg-white/5 text-white/30 ring-1 ring-white/10"
+              }`}
+              title={ollamaAvailable ? "Ollama Vision is running — SAM crops are auto-captioned" : "Ollama Vision unavailable — using image-only feedback"}
+            >
+              {ollamaAvailable ? <Eye className="h-3 w-3" /> : <EyeOff className="h-3 w-3" />}
+              {ollamaAvailable ? "Vision ON" : "Vision OFF"}
+            </span>
+          )}
+        </div>
 
         <Separator className="bg-white/[0.06]" />
 

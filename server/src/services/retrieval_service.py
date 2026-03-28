@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional, Union
 
@@ -8,12 +9,15 @@ import faiss
 from src.models.configs import get_model_config
 from src.config import resolve_repo
 from src.models.llava import init_llava
+from src.models.ollama_vision import batch_caption
 from src.models.relevance_feedback import (
     CaptionVLMRelevanceFeedback,
     ImageBasedVLMRelevanceFeedback,
     RocchioUpdate,
 )
 from src.utils.image_utils import resize_images
+
+logger = logging.getLogger(__name__)
 
 
 class RetrievalService:
@@ -250,6 +254,8 @@ class RetrievalServiceVisual(RetrievalService):
         alpha: float = 0.8,
         beta: float = 0.5,
         gamma: float = 0.15,
+        ollama_url: str = "http://localhost:11434",
+        ollama_model: str = "llama3.2-vision",
     ):
         super().__init__(
             config=config,
@@ -259,12 +265,33 @@ class RetrievalServiceVisual(RetrievalService):
             beta=beta,
             gamma=gamma,
         )
+        self.ollama_url = ollama_url
+        self.ollama_model = ollama_model
         self._init_image_based_relevance_feedback()
 
     def _init_image_based_relevance_feedback(self):
         self.image_based_relevance_feedback = ImageBasedVLMRelevanceFeedback(
             vlm_wrapper_retrieval=self.wrapper,
         )
+
+    def _ollama_caption_segments(
+        self,
+        segments: List[Image.Image],
+        query: str,
+        label: str,
+        ollama_available: bool,
+    ) -> List[str]:
+        """Auto-caption a list of SAM crops via Ollama. Returns only non-empty captions."""
+        if not ollama_available or not segments:
+            return []
+        captions = batch_caption(
+            crops=segments,
+            query=query,
+            labels=[label] * len(segments),
+            url=self.ollama_url,
+            model=self.ollama_model,
+        )
+        return [c for c in captions if c]
 
     def process_and_apply_feedback(
         self,
@@ -276,6 +303,7 @@ class RetrievalServiceVisual(RetrievalService):
         annotator_json_boxes_list: Optional[List[Any]] = None,
         sam_annotations: Optional[List[Any]] = None,
         fuse_initial_query: bool = False,
+        ollama_available: bool = False,
     ):
         relevance_feedback_results = self.image_based_relevance_feedback(
             query=query,
@@ -288,8 +316,22 @@ class RetrievalServiceVisual(RetrievalService):
         relevant_segments = relevance_feedback_results["relevant_segments"]
         irrelevant_segments = relevance_feedback_results["irrelevant_segments"]
 
+        # --- Ollama auto-captioning of SAM crops ---
+        vlm_pos_captions = self._ollama_caption_segments(
+            relevant_segments, query, "Relevant", ollama_available,
+        )
+        vlm_neg_captions = self._ollama_caption_segments(
+            irrelevant_segments, query, "Irrelevant", ollama_available,
+        )
+        has_vlm = bool(vlm_pos_captions or vlm_neg_captions)
+        if has_vlm:
+            logger.info(
+                "[Ollama] Auto-captions: %d positive, %d negative",
+                len(vlm_pos_captions), len(vlm_neg_captions),
+            )
+
         with torch.no_grad():
-            # Encode positive image segments into embeddings
+            # --- Image embeddings from SAM crops ---
             if relevant_segments is not None and relevant_segments:
                 positive_image_embeddings = self.wrapper.get_image_embeddings(
                     self.wrapper.process_inputs(images=relevant_segments)
@@ -297,7 +339,7 @@ class RetrievalServiceVisual(RetrievalService):
                 positive_image_embeddings = positive_image_embeddings.mean(dim=0)
             else:
                 positive_image_embeddings = None
-            # Encode negative image segments into embeddings
+
             if irrelevant_segments is not None and irrelevant_segments:
                 negative_image_embeddings = self.wrapper.get_image_embeddings(
                     self.wrapper.process_inputs(images=irrelevant_segments)
@@ -305,35 +347,56 @@ class RetrievalServiceVisual(RetrievalService):
                 negative_image_embeddings = negative_image_embeddings.mean(dim=0)
             else:
                 negative_image_embeddings = None
-            # Encode positive text captions into embeddings
-            if relevant_captions is not None and relevant_captions:
-                positive_text_embeddings = self.wrapper.get_text_embeddings(
-                    self.wrapper.process_inputs(text=relevant_captions)
-                )
-                positive_text_embeddings = positive_text_embeddings.mean(dim=0)
+
+            # --- Text embeddings: merge user-typed text + Ollama auto-captions ---
+            all_pos_texts: List[str] = []
+            if relevant_captions and relevant_captions.strip():
+                all_pos_texts.append(relevant_captions.strip())
+            all_pos_texts.extend(vlm_pos_captions)
+
+            all_neg_texts: List[str] = []
+            if irrelevant_captions and irrelevant_captions.strip():
+                all_neg_texts.append(irrelevant_captions.strip())
+            all_neg_texts.extend(vlm_neg_captions)
+
+            if all_pos_texts:
+                pos_text_embs = []
+                for txt in all_pos_texts:
+                    emb = self.wrapper.get_text_embeddings(
+                        self.wrapper.process_inputs(text=txt)
+                    )
+                    pos_text_embs.append(emb)
+                positive_text_embeddings = torch.stack(pos_text_embs).mean(dim=0)
             else:
                 positive_text_embeddings = None
-            # Encode negative text captions into embeddings
-            if irrelevant_captions is not None and irrelevant_captions:
-                negative_text_embeddings = self.wrapper.get_text_embeddings(
-                    self.wrapper.process_inputs(text=irrelevant_captions)
-                )
-                negative_text_embeddings = negative_text_embeddings.mean(dim=0)
+
+            if all_neg_texts:
+                neg_text_embs = []
+                for txt in all_neg_texts:
+                    emb = self.wrapper.get_text_embeddings(
+                        self.wrapper.process_inputs(text=txt)
+                    )
+                    neg_text_embs.append(emb)
+                negative_text_embeddings = torch.stack(neg_text_embs).mean(dim=0)
             else:
                 negative_text_embeddings = None
 
-            # Combine positive image embeddings and text embeddings
+            # --- Weighted combination of image + text embeddings ---
+            # With VLM captions the text signal is richer → weight it more heavily
+            img_w = 0.4 if has_vlm else 0.5
+            txt_w = 0.6 if has_vlm else 0.5
+
             if positive_image_embeddings is not None and positive_text_embeddings is not None:
-                positive_embeddings = (positive_image_embeddings + positive_text_embeddings) / 2
+                positive_embeddings = img_w * positive_image_embeddings + txt_w * positive_text_embeddings
             elif positive_image_embeddings is not None:
                 positive_embeddings = positive_image_embeddings
             elif positive_text_embeddings is not None:
                 positive_embeddings = positive_text_embeddings
             else:
                 positive_embeddings = None
-            # Combine negative image embeddings and text embeddings
+
             if negative_image_embeddings is not None and negative_text_embeddings is not None:
-                negative_embeddings = (negative_image_embeddings + negative_text_embeddings) / 2
+                negative_embeddings = img_w * negative_image_embeddings + txt_w * negative_text_embeddings
             elif negative_image_embeddings is not None:
                 negative_embeddings = negative_image_embeddings
             elif negative_text_embeddings is not None:

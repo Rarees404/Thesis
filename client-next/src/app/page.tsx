@@ -10,9 +10,6 @@ import { Header } from "@/components/header";
 import { SearchBar } from "@/components/search-bar";
 import { ImageGallery } from "@/components/image-gallery";
 import { FeedbackPanel } from "@/components/feedback-panel";
-import { SAM3Panel } from "@/components/sam3-panel";
-import { CaptionPanel } from "@/components/caption-panel";
-import { HistoryPanel } from "@/components/history-panel";
 import { ServerDashboard } from "@/components/server-dashboard";
 import { ErrorBanner } from "@/components/error-banner";
 
@@ -36,7 +33,13 @@ export default function Home() {
     try {
       const data = await searchImages(query, topK);
       if (data.success) {
-        setSearchResults(data.images, data.image_paths, data.scores);
+        setSearchResults(
+          data.images,
+          data.image_paths,
+          data.scores,
+          data.preview_width ?? 224,
+          data.preview_height ?? 224
+        );
       } else {
         setError(data.message || "Search failed");
       }
@@ -94,7 +97,13 @@ export default function Home() {
       });
 
       if (data.success) {
-        setFeedbackResults(data.images, data.image_paths, data.scores);
+        setFeedbackResults(
+          data.images,
+          data.image_paths,
+          data.scores,
+          data.preview_width ?? 224,
+          data.preview_height ?? 224
+        );
       } else {
         setError(data.message || "Feedback failed");
       }
@@ -120,9 +129,8 @@ export default function Home() {
                   Visual Relevance Feedback
                 </h2>
                 <p className="max-w-xl text-white/40 text-lg">
-                  Search for images using natural language, click to segment
-                  relevant regions with SAM, and iteratively refine
-                  results with the Rocchio algorithm.
+                  Search with natural language, click images to mark relevant or
+                  irrelevant regions (SAM), then refine results with feedback.
                 </p>
               </div>
             )}
@@ -133,16 +141,7 @@ export default function Home() {
 
             <ImageGallery />
 
-            {/* SAM3 segmentation panel */}
-            <SAM3Panel />
-
-            {/* Original bbox feedback */}
             <FeedbackPanel onApply={handleApplyFeedback} />
-
-            {/* Llama 3.2 Vision captions */}
-            <CaptionPanel />
-
-            <HistoryPanel />
           </div>
         )}
 

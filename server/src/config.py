@@ -15,6 +15,13 @@ class ServerSettings(BaseSettings):
     logs_path: Path | None = None
     captioning_config_path: Path | None = None
 
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.2-vision"
+    ollama_enabled: bool = True
+
+    # "auto" = try SAM3 then SAM2, "sam3" = SAM3 only, "sam2" = SAM2 only
+    sam_backend: str = "auto"
+
     @field_validator(
         "config_path",
         "captioning_config_path",

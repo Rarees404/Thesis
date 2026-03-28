@@ -360,7 +360,8 @@ class ImageBasedVLMRelevanceFeedback(RelevanceFeedback):
                     )
                     mask = np.array(mask_img) > 127
 
-                masked = img_np * mask[:, :, np.newaxis]
+                gray_bg = np.full_like(img_np, 128)
+                masked = np.where(mask[:, :, np.newaxis], img_np, gray_bg)
                 rows, cols = np.where(mask)
                 if len(rows) == 0:
                     continue
