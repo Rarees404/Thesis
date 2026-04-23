@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -122,7 +122,7 @@ function MetricCard({
         </div>
 
         <div className="mt-2 h-8">
-          <ResponsiveContainer width="100%" height="100%">
+          <ResponsiveContainer width="100%" height={32}>
             <AreaChart data={last12} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
               <defs>
                 <linearGradient id={`spark-${title}`} x1="0" y1="0" x2="0" y2="1">
@@ -185,6 +185,9 @@ function ChartTooltipContent({ active, payload, label }: { active?: boolean; pay
 }
 
 export function ServerDashboard() {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const metrics = useMetricsStore((s) => s.metrics);
   const history = useMetricsStore((s) => s.history);
   const status = useMetricsStore((s) => s.status);
@@ -268,7 +271,8 @@ export function ServerDashboard() {
       </Card>
 
       {/* Metric cards */}
-      {metrics && (
+      {mounted && metrics && (
+
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <MetricCard
             icon={Cpu}
@@ -326,6 +330,7 @@ export function ServerDashboard() {
       )}
 
       {/* Main charts */}
+      {mounted && (
       <div className="grid gap-4 lg:grid-cols-2">
         {/* CPU & Memory */}
         <Card>
@@ -460,6 +465,7 @@ export function ServerDashboard() {
           </CardContent>
         </Card>
       </div>
+      )}
 
       {/* System info */}
       {metrics && (

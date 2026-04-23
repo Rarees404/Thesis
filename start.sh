@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # VisualRef — Full-stack startup script
-# Starts the backend (FastAPI + SigLIP + SAM3 + Ollama check) and the
-# frontend (Next.js), then runs a health checklist to confirm readiness.
+# Starts Ollama (llama3.2-vision), the backend (FastAPI + SigLIP + SAM3),
+# and the frontend (Next.js), then runs a health checklist to confirm readiness.
 #
 set -euo pipefail
 
@@ -19,16 +19,46 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
 
 ok()   { printf "${GREEN}  ✓ %s${NC}\n" "$1"; }
+warn() { printf "${YELLOW}  ⚠ %s${NC}\n" "$1"; }
 fail() { printf "${RED}  ✗ %s${NC}\n" "$1"; }
 info() { printf "${CYAN}  ℹ %s${NC}\n" "$1"; }
 hdr()  { printf "\n${BOLD}%s${NC}\n" "$1"; }
 
 # ── Cleanup on exit ────────────────────────────────────────────────────────
-SERVER_PID="" CLIENT_PID=""
+SERVER_PID="" CLIENT_PID="" OLLAMA_PID=""
+
+# Kill a process and all its descendants, then confirm the port is free.
+kill_tree() {
+    local pid="$1"
+    [ -z "$pid" ] && return
+    # Recursively kill children first
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null || true)
+    for child in $children; do
+        kill_tree "$child"
+    done
+    kill -TERM "$pid" 2>/dev/null || true
+}
+
 cleanup() {
     hdr "Shutting down…"
-    [ -n "$CLIENT_PID" ] && kill "$CLIENT_PID" 2>/dev/null && info "Frontend stopped"
-    [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null && info "Server stopped"
+    # Kill each process tree (subshell + its children: node, uvicorn, ollama)
+    if [ -n "$CLIENT_PID" ]; then
+        kill_tree "$CLIENT_PID"
+        info "Frontend stopped"
+    fi
+    if [ -n "$SERVER_PID" ]; then
+        kill_tree "$SERVER_PID"
+        info "Backend stopped"
+    fi
+    if [ -n "$OLLAMA_PID" ]; then
+        kill_tree "$OLLAMA_PID"
+        info "Ollama stopped"
+    fi
+    # Give processes a moment to exit cleanly, then force-free the ports
+    sleep 1
+    kill_port "$SERVER_PORT"
+    kill_port "$CLIENT_PORT"
     exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -43,12 +73,21 @@ kill_port() {
     fi
 }
 
+# ── Read a value from server/.env ──────────────────────────────────────────
+read_env() {
+    local key="$1" default="${2:-}"
+    local val
+    val=$(grep -E "^${key}=" "$SERVER_DIR/.env" 2>/dev/null | head -1 | sed "s/^${key}=//" | tr -d "\"'") || true
+    echo "${val:-$default}"
+}
+
 hdr "═══════════════════════════════════════"
 hdr "       VisualRef  —  Startup"
 hdr "═══════════════════════════════════════"
 
-# ── Pre-flight checks ──────────────────────────────────────────────────────
-hdr "[1/5] Pre-flight checks"
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[1/6] Pre-flight checks"
+# ────────────────────────────────────────────────────────────────────────────
 
 if [ ! -d "$SERVER_DIR/venv" ]; then
     fail "Python venv not found at $SERVER_DIR/venv"
@@ -69,19 +108,168 @@ if [ ! -d "$CLIENT_DIR/node_modules" ]; then
 fi
 ok "Frontend dependencies ready"
 
-# ── Free ports ──────────────────────────────────────────────────────────────
-hdr "[2/5] Freeing ports"
+# ── Environment files (bootstrap from examples) ───────────────────────────
+if [ ! -f "$SERVER_DIR/.env" ]; then
+    if [ -f "$SERVER_DIR/.env.example" ]; then
+        info "Creating server/.env from .env.example (Visual Genome defaults)"
+        cp "$SERVER_DIR/.env.example" "$SERVER_DIR/.env"
+        ok "server/.env created — edit CONFIG_PATH/INDEX_PATH if you use another corpus"
+    else
+        fail "server/.env missing — create it (see server/.env.example)"
+        exit 1
+    fi
+fi
+
+if [ ! -f "$CLIENT_DIR/.env.local" ]; then
+    if [ -f "$CLIENT_DIR/.env.example" ]; then
+        info "Creating client-next/.env.local from .env.example"
+        cp "$CLIENT_DIR/.env.example" "$CLIENT_DIR/.env.local"
+        ok "client-next/.env.local created"
+    else
+        warn "client-next/.env.local missing — set NEXT_PUBLIC_SERVER_URL (see README)"
+    fi
+fi
+
+mkdir -p "$ROOT_DIR/logs"
+
+# ── FAISS index must exist before backend starts ──────────────────────────
+INDEX_ABS=""
+INDEX_ABS="$(cd "$SERVER_DIR" && "$SERVER_DIR/venv/bin/python" -c "
+from pathlib import Path
+import re
+raw = Path('.env').read_text(encoding='utf-8', errors='replace')
+for line in raw.splitlines():
+    line = line.strip()
+    if not line or line.startswith('#'):
+        continue
+    m = re.match(r'^INDEX_PATH=(.*)$', line)
+    if m:
+        val = m.group(1).strip().strip('\"').strip(\"'\")
+        print(Path(val).resolve())
+        break
+" 2>/dev/null)" || true
+
+if [ -z "$INDEX_ABS" ] || [ ! -f "$INDEX_ABS" ]; then
+    fail "FAISS index not found${INDEX_ABS:+ at: $INDEX_ABS}"
+    echo ""
+    echo "       Build it first (Visual Genome):"
+    echo "         bash scripts/build_index.sh vg"
+    echo "       Then ensure server/.env INDEX_PATH matches the output path."
+    exit 1
+fi
+
+PATHS_TXT="$(dirname "$INDEX_ABS")/image_paths.txt"
+if [ ! -f "$PATHS_TXT" ]; then
+    fail "image_paths.txt missing next to index: $PATHS_TXT"
+    echo "       Re-run:  bash scripts/build_index.sh vg"
+    exit 1
+fi
+ok "FAISS index ready ($(wc -l < "$PATHS_TXT" | tr -d ' ') paths)"
+
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[2/6] Ollama — Vision model (llama3.2-vision)"
+# ────────────────────────────────────────────────────────────────────────────
+
+OLLAMA_URL=$(read_env "OLLAMA_URL" "http://127.0.0.1:11434")
+OLLAMA_MODEL=$(read_env "OLLAMA_MODEL" "llama3.2-vision")
+OLLAMA_ENABLED=$(read_env "OLLAMA_ENABLED" "true")
+OLLAMA_HOST="${OLLAMA_URL#http://}"
+OLLAMA_HOST="${OLLAMA_HOST#https://}"   # strip scheme
+OLLAMA_PORT="${OLLAMA_HOST##*:}"        # last component after colon
+OLLAMA_PORT="${OLLAMA_PORT%%/*}"        # strip any path
+
+WE_STARTED_OLLAMA=0
+
+if [ "$OLLAMA_ENABLED" = "false" ]; then
+    warn "Ollama disabled in server/.env (OLLAMA_ENABLED=false) — skipping"
+elif ! command -v ollama &>/dev/null; then
+    warn "ollama not installed — vision captioning will be skipped"
+    warn "Install from: https://ollama.com/download"
+else
+    ok "ollama binary found ($(ollama --version 2>/dev/null || echo 'version unknown'))"
+
+    # ── 1. Start ollama serve if not already listening ─────────────────────
+    if curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+        ok "Ollama service already running on port $OLLAMA_PORT"
+    else
+        info "Starting ollama serve…"
+        ollama serve >"$LOG_DIR/ollama.log" 2>&1 &
+        OLLAMA_PID=$!
+        WE_STARTED_OLLAMA=1
+
+        # Wait up to 30s for it to come up
+        WAITED=0
+        while [ $WAITED -lt 30 ]; do
+            if curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+                break
+            fi
+            sleep 1
+            WAITED=$((WAITED + 1))
+        done
+
+        if ! curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+            warn "Ollama service did not start within 30s — vision captioning unavailable"
+            warn "Check $LOG_DIR/ollama.log for details"
+            OLLAMA_PID=""
+        else
+            ok "Ollama service is up"
+        fi
+    fi
+
+    # ── 2. Pull the model if not already present ───────────────────────────
+    if curl -sf "${OLLAMA_URL}/api/tags" >/dev/null 2>&1; then
+        MODEL_PRESENT=$(curl -sf "${OLLAMA_URL}/api/tags" 2>/dev/null \
+            | "$SERVER_DIR/venv/bin/python" -c "
+import sys, json
+data = json.load(sys.stdin)
+models = [m.get('name','') for m in data.get('models', [])]
+target = sys.argv[1]
+# match by prefix (e.g. 'llama3.2-vision' matches 'llama3.2-vision:latest')
+found = any(m == target or m.startswith(target + ':') for m in models)
+print('yes' if found else 'no')
+" "$OLLAMA_MODEL" 2>/dev/null || echo "no")
+
+        if [ "$MODEL_PRESENT" = "yes" ]; then
+            ok "Model '$OLLAMA_MODEL' already pulled"
+        else
+            info "Pulling $OLLAMA_MODEL — this may take several minutes on first run…"
+            if ollama pull "$OLLAMA_MODEL" 2>&1 | tee "$LOG_DIR/ollama_pull.log" | \
+               grep -E "(pulling|verifying|writing|success)" | tail -5; then
+                ok "Model '$OLLAMA_MODEL' pulled successfully"
+            else
+                warn "Model pull may have failed — check $LOG_DIR/ollama_pull.log"
+            fi
+        fi
+
+        # ── 3. Warm up: load the model into memory now (avoid cold start on first search) ──
+        info "Warming up $OLLAMA_MODEL (loading into memory)…"
+        WARMUP_RESP=$(curl -sf -X POST "${OLLAMA_URL}/api/generate" \
+            -H "Content-Type: application/json" \
+            -d "{\"model\": \"${OLLAMA_MODEL}\", \"prompt\": \"hi\", \"stream\": false, \"options\": {\"num_predict\": 1}}" \
+            --max-time 120 2>/dev/null || echo "")
+        if [ -n "$WARMUP_RESP" ]; then
+            ok "Model '$OLLAMA_MODEL' loaded and ready"
+        else
+            warn "Warm-up request timed out — model will load on first use"
+        fi
+    fi
+fi
+
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[3/6] Freeing ports"
+# ────────────────────────────────────────────────────────────────────────────
 kill_port "$SERVER_PORT"
 kill_port "$CLIENT_PORT"
 ok "Ports $SERVER_PORT and $CLIENT_PORT are free"
 
-# ── Start backend ───────────────────────────────────────────────────────────
-hdr "[3/5] Starting backend  (port $SERVER_PORT)"
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[4/6] Starting backend  (port $SERVER_PORT)"
+# ────────────────────────────────────────────────────────────────────────────
 info "Loading SigLIP + SAM3 — this may take 2–5 min on first launch…"
 (
     cd "$SERVER_DIR"
     source venv/bin/activate
-    python -m uvicorn src.retrieval_server_visual:app \
+    MallocStackLogging=NO python -m uvicorn src.retrieval_server_visual:app \
         --host 0.0.0.0 --port "$SERVER_PORT" \
         2>&1 | tee "$LOG_DIR/server.log"
 ) &
@@ -94,9 +282,13 @@ while [ $WAITED -lt $MAX_WAIT ]; do
     if curl -sf "http://localhost:$SERVER_PORT/health" >/dev/null 2>&1; then
         break
     fi
+    # Bail early if the server process died
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+        fail "Backend process exited unexpectedly — check $LOG_DIR/server.log"
+        exit 1
+    fi
     sleep 3
     WAITED=$((WAITED + 3))
-    # Show progress every 15 seconds
     if [ $((WAITED % 15)) -eq 0 ]; then
         info "Still loading models… (${WAITED}s)"
     fi
@@ -108,15 +300,15 @@ if [ $WAITED -ge $MAX_WAIT ]; then
 fi
 ok "Backend is up  (http://localhost:$SERVER_PORT)"
 
-# ── Start frontend ──────────────────────────────────────────────────────────
-hdr "[4/5] Starting frontend  (port $CLIENT_PORT)"
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[5/6] Starting frontend  (port $CLIENT_PORT)"
+# ────────────────────────────────────────────────────────────────────────────
 (
     cd "$CLIENT_DIR"
     npm run dev -- --port "$CLIENT_PORT" 2>&1 | tee "$LOG_DIR/client.log"
 ) &
 CLIENT_PID=$!
 
-# Wait for Next.js to respond
 WAITED=0
 while [ $WAITED -lt 30 ]; do
     if curl -sf "http://localhost:$CLIENT_PORT" >/dev/null 2>&1; then
@@ -125,32 +317,42 @@ while [ $WAITED -lt 30 ]; do
     sleep 2
     WAITED=$((WAITED + 2))
 done
-ok "Frontend is up  (http://localhost:$CLIENT_PORT)"
+if curl -sf "http://localhost:$CLIENT_PORT" >/dev/null 2>&1; then
+    ok "Frontend is up  (http://localhost:$CLIENT_PORT)"
+else
+    warn "Frontend did not respond within 30s — check $LOG_DIR/client.log"
+fi
 
-# ── Health checklist ────────────────────────────────────────────────────────
-hdr "[5/5] System checklist"
+# ────────────────────────────────────────────────────────────────────────────
+hdr "[6/6] System checklist"
+# ────────────────────────────────────────────────────────────────────────────
 
 HEALTH=$(curl -sf "http://localhost:$SERVER_PORT/health" 2>/dev/null || echo "{}")
 SAM_STATUS=$(curl -sf "http://localhost:$SERVER_PORT/sam_status" 2>/dev/null || echo "{}")
 OLLAMA_STATUS=$(curl -sf "http://localhost:$SERVER_PORT/ollama_status" 2>/dev/null || echo "{}")
+METRICS=$(curl -sf "http://localhost:$SERVER_PORT/metrics" 2>/dev/null || echo "{}")
 
-# Active dataset (from .env)
-ACTIVE_CONFIG=$(grep -E "^CONFIG_PATH=" "$SERVER_DIR/.env" 2>/dev/null | head -1 | sed 's/.*\///' | sed 's/_siglip.yaml//' | sed 's/_clip.*//')
+# Active dataset
+ACTIVE_CONFIG=$(grep -E "^CONFIG_PATH=" "$SERVER_DIR/.env" 2>/dev/null | head -1 \
+    | sed 's/.*\///' | sed 's/_siglip\.yaml//')
 ok "Dataset: ${ACTIVE_CONFIG:-unknown}"
 
-# SigLIP / FAISS index
-MODEL_LOADED=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
-if [ "$MODEL_LOADED" = "healthy" ]; then
-    METRICS=$(curl -sf "http://localhost:$SERVER_PORT/metrics" 2>/dev/null || echo "{}")
-    INDEX_SIZE=$(echo "$METRICS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('model',{}).get('index_size',0))" 2>/dev/null || echo "0")
-    ok "SigLIP encoder + FAISS index loaded ($INDEX_SIZE images)"
+# SigLIP / FAISS
+MODEL_STATUS=$(echo "$HEALTH" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+if [ "$MODEL_STATUS" = "healthy" ]; then
+    INDEX_SIZE=$(echo "$METRICS" | "$SERVER_DIR/venv/bin/python" -c \
+        "import sys,json; print(json.load(sys.stdin).get('model',{}).get('index_size',0))" 2>/dev/null || echo "0")
+    ok "SigLIP encoder + FAISS index  ($INDEX_SIZE images)"
 else
     fail "SigLIP / FAISS not loaded"
 fi
 
 # SAM
-SAM_TYPE=$(echo "$SAM_STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('model_type','none'))" 2>/dev/null || echo "none")
-SAM_LOADED=$(echo "$SAM_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('loaded',False))" 2>/dev/null || echo "False")
+SAM_TYPE=$(echo "$SAM_STATUS" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('model_type','none'))" 2>/dev/null || echo "none")
+SAM_LOADED=$(echo "$SAM_STATUS" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('loaded',False))" 2>/dev/null || echo "False")
 if [ "$SAM_LOADED" = "True" ]; then
     ok "SAM segmenter: $SAM_TYPE"
 else
@@ -158,27 +360,40 @@ else
 fi
 
 # Ollama
-OLLAMA_AVAIL=$(echo "$OLLAMA_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('available',False))" 2>/dev/null || echo "False")
-OLLAMA_MODEL=$(echo "$OLLAMA_STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('model','?'))" 2>/dev/null || echo "?")
+OLLAMA_AVAIL=$(echo "$OLLAMA_STATUS" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('available',False))" 2>/dev/null || echo "False")
+OLLAMA_MDL=$(echo "$OLLAMA_STATUS" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('model','?'))" 2>/dev/null || echo "?")
 if [ "$OLLAMA_AVAIL" = "True" ]; then
-    ok "Ollama Vision: $OLLAMA_MODEL"
+    ok "Ollama Vision: $OLLAMA_MDL (warm)"
 else
-    printf "${YELLOW}  ⚠ Ollama Vision: not available (feedback uses image-only embeddings)${NC}\n"
-    info "To enable: ollama pull llama3.2-vision && ollama serve"
+    warn "Ollama Vision: not available — feedback uses image-only embeddings"
+fi
+
+# VG region phrases
+VG_LOADED=$(echo "$HEALTH" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('vg_index_loaded', False))" 2>/dev/null || echo "False")
+if [ "$VG_LOADED" = "True" ]; then
+    ok "Visual Genome region index loaded"
+else
+    info "VG region index not loaded (region_descriptions.json optional)"
 fi
 
 # GPU
-GPU_AVAIL=$(echo "$HEALTH" | python3 -c "import sys,json; print(json.load(sys.stdin).get('gpu_available',False))" 2>/dev/null || echo "False")
+GPU_AVAIL=$(echo "$HEALTH" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('gpu_available',False))" 2>/dev/null || echo "False")
+GPU_NAME=$(echo "$METRICS" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; d=json.load(sys.stdin); print(d.get('gpu',{}).get('backend','cpu'))" 2>/dev/null || echo "cpu")
 if [ "$GPU_AVAIL" = "True" ]; then
-    ok "GPU (CUDA) available"
+    ok "GPU available  (backend: $GPU_NAME)"
 else
-    ok "Running on MPS / CPU"
+    ok "Running on MPS / CPU  (backend: $GPU_NAME)"
 fi
 
 hdr "═══════════════════════════════════════"
 printf "${GREEN}${BOLD}  Ready!  Open http://localhost:$CLIENT_PORT${NC}\n"
 hdr "═══════════════════════════════════════"
-printf "\n  Press ${BOLD}Ctrl+C${NC} to stop both servers.\n\n"
+printf "\n  Press ${BOLD}Ctrl+C${NC} to stop all services.\n\n"
 
 # ── Keep script alive until Ctrl+C ─────────────────────────────────────────
 wait

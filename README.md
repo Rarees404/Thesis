@@ -1,8 +1,10 @@
 # VisualReF — Visual Relevance Feedback for Interactive Image Retrieval
 
-Prototype from the RecSys ’25 demo paper: users search with natural language, click on image regions to mark what they want more or less of (SAM 3 segmentation), and optionally use **Ollama + Llama 3.2 Vision** to auto-caption those regions. Feedback updates the query with **Rocchio**-style refinement over **SigLIP** embeddings and a **FAISS** index.
+Prototype from the RecSys ’25 demo paper: users search with natural language, click on image regions to mark what they want more or less of (**SAM 3** segmentation), and optionally use **Ollama + Llama 3.2 Vision** to auto-caption regions. On **Visual Genome**, human **region descriptions** are used when available (faster than vision-only captions). Feedback updates the query with **Rocchio**-style refinement over **SigLIP** embeddings and a **FAISS** index.
 
-**Stack today:** FastAPI backend (`server/`) · Next.js 16 frontend (`client-next/`) · SigLIP retrieval · SAM 3 · Ollama `llama3.2-vision`.
+**Default corpus:** **Visual Genome** (~108k images). **COCO** (e.g. val2014) is optional.
+
+**Stack:** FastAPI (`server/`) · Next.js (`client-next/`) · SigLIP retrieval · SAM 3 · Ollama `llama3.2-vision`.
 
 ---
 
@@ -24,25 +26,90 @@ Example figures: `./assets/`.
 
 ---
 
+## How the pieces connect (architecture)
+
+```mermaid
+flowchart LR
+  subgraph browser [Browser]
+    UI[Next.js UI :3000]
+  end
+  subgraph backend [Backend]
+    API[FastAPI :8001]
+    SigLIP[SigLIP encoder]
+    FAISS[FAISS index]
+    SAM[SAM 3]
+    Ollama[Ollama llama3.2-vision]
+    VGJSON[VG region_descriptions.json]
+  end
+  subgraph disk [Repo on disk]
+    DATA[data/ images]
+    IDX[faiss/ index + image_paths.txt]
+  end
+
+  UI -->|"fetch JSON (direct, long timeout)"| API
+  API --> SigLIP
+  API --> FAISS
+  API --> SAM
+  API --> Ollama
+  API --> VGJSON
+  FAISS --> IDX
+  API -->|"open files by path"| DATA
+  VGJSON --> DATA
+```
+
+1. **Indexing (offline)** — Images under `data/` are encoded with SigLIP; vectors go into `faiss/.../image_index.faiss`. The **same order** of rows is written to `image_paths.txt` (one filesystem path per line). For Visual Genome, if `region_descriptions.json` is present, phrase embeddings are **fused** with image embeddings (hybrid index).
+2. **Search (runtime)** — The browser does **not** talk to Next.js API routes for retrieval. `client-next` uses `NEXT_PUBLIC_SERVER_URL` (default `http://127.0.0.1:8001`) and calls FastAPI **directly** so `/search`, `/segment`, and `/apply_feedback` can run for several minutes without a dev-server proxy timeout.
+3. **Which corpus is live** — Controlled only by `server/.env`: `CONFIG_PATH` (YAML: model id, `IMG_SIZE`, corpus hint) and **`INDEX_PATH`** (the `.faiss` file). The repository default targets **Visual Genome** (see below).
+4. **Paths** — Entries in `image_paths.txt` may be absolute or relative to the **repository root** (`visualref/`). The server resolves relatives via `server/src/config.py` (`resolve_repo`).
+
+---
+
 ## Repository layout
 
 | Path | Role |
 |------|------|
-| `start.sh` | **Main entry:** starts FastAPI (port 8001) + Next.js (port 3000), health checks |
-| `server/` | Python backend: SigLIP, FAISS, SAM 3, Ollama client, `/search`, `/segment`, `/apply_feedback`, `/caption`, `/health` |
-| `server/.env` | **Required:** dataset config path, FAISS index path, Ollama URL/model, `SAM_BACKEND=sam3` |
-| `server/sam3/` | SAM 3 package (clone + `pip install -e .`; often gitignored — run `scripts/setup_models.sh`) |
-| `server/venv/` | Python virtualenv (you create this; not committed) |
-| `client-next/` | Next.js UI; proxies `/api/*` to the backend via `NEXT_PUBLIC_SERVER_URL` |
-| `configs/demo/*.yaml` | Retrieval settings: model id, `IMG_SIZE`, corpus hints |
-| `data/` | **Your image files** (not in git): e.g. `data/coco/val2014/*.jpg` |
-| `faiss/` | **Built artifacts:** per-dataset folders with `image_index.faiss` + `image_paths.txt` |
-| `scripts/setup_models.sh` | Installs SAM 3 from `server/sam3`, checks Ollama, pulls `llama3.2-vision` |
-| `scripts/build_index.sh` | Builds FAISS index from a folder of images (SigLIP or CLIP) |
-| `scripts/build_all_indexes.sh` | Runs `build_index.sh` for every dataset present under `data/` + combined |
-| `deploy/` | Cloud GPU notes (`DEPLOY.md`), `setup-cloud.sh`, optional `Dockerfile` |
+| `start.sh` | Starts FastAPI (8001) + Next.js (3000), health checklist |
+| `server/` | Backend: SigLIP, FAISS, SAM 3, VG region index, Ollama client |
+| `server/.env` | **`CONFIG_PATH`**, **`INDEX_PATH`**, Ollama, `SAM_BACKEND=sam3` (copy from `.env.example`) |
+| `server/.env.example` | Committed template; **Visual Genome** defaults |
+| `server/sam3/` | SAM 3 package (`pip install -e .`; see `scripts/setup_models.sh`) |
+| `server/venv/` | Python virtualenv (local; not committed) |
+| `client-next/` | Next.js UI; **`NEXT_PUBLIC_SERVER_URL`** → backend |
+| `client-next/.env.example` | Template for `.env.local` |
+| `configs/demo/*.yaml` | Corpus yaml (`vg_siglip.yaml`; `coco_siglip.yaml` if you add COCO data) |
+| **`data/`** | **Image corpora + VG metadata** (not in git; you download or link) |
+| **`faiss/`** | **Built indexes:** `image_index.faiss` + `image_paths.txt` per dataset |
+| `scripts/setup_models.sh` | SAM 3 + Ollama model setup |
+| `scripts/download_visual_genome.sh` | Downloads VG images + `region_descriptions.json` + `image_data.json` |
+| `scripts/build_index.sh` | Builds FAISS (+ VG hybrid if metadata present) |
+| `scripts/build_all_indexes.sh` | Rebuilds the **Visual Genome** index (same as `build_index.sh` with no args) |
 
-Legacy Gradio client, Docker Compose, and old launch scripts were removed; this README describes the supported path only.
+---
+
+## Data directory structure (`data/`)
+
+Everything you retrieve from should live under **`visualref/data/`** (repo root). Example:
+
+```text
+data/
+└── visual_genome/                     # default corpus
+    ├── VG_100K/
+    ├── VG_100K_2/
+    ├── region_descriptions.json      # VG region phrases (hybrid index + runtime phrases)
+    └── image_data.json               # image metadata (distribution file)
+```
+
+**FAISS output** (separate from raw images):
+
+```text
+faiss/
+└── visual_genome/
+    └── google/siglip-large-patch16-256/
+        ├── image_index.faiss
+        └── image_paths.txt
+```
+
+After moving or re-downloading images, **rebuild** the matching index so `image_paths.txt` stays aligned.
 
 ---
 
@@ -50,116 +117,77 @@ Legacy Gradio client, Docker Compose, and old launch scripts were removed; this 
 
 | Requirement | Notes |
 |-------------|--------|
-| **Python** | 3.10–3.12 recommended (3.11 used in development) |
-| **Node.js** | 18+ (for Next.js) |
-| **Disk** | Plan for datasets + HF cache + Ollama model (SAM 3 and SigLIP download from Hugging Face; `llama3.2-vision` is multi‑GB via Ollama) |
-| **GPU** | Optional but strongly recommended: CUDA (Linux/Windows) or Apple **MPS** (macOS). CPU works but is slow for indexing and SAM 3 |
-| **Ollama** | Optional for vision captions: [ollama.com](https://ollama.com) — install and `ollama pull llama3.2-vision` |
-| **Hugging Face** | SAM 3 may be gated: log in with `huggingface-cli login` if downloads fail |
+| Python | 3.10–3.12 (3.11 used in dev) |
+| Node.js | 18+ |
+| Disk | VG ~15 GB images + JSON; HF cache; Ollama model weights (optional COCO is separate) |
+| GPU | Optional; **MPS** (macOS) or **CUDA** speeds SigLIP, SAM 3, indexing |
+| Ollama | Optional captions: [ollama.com](https://ollama.com) — `ollama pull llama3.2-vision` |
+| Hugging Face | SAM 3 may be gated — `huggingface-cli login` if needed |
 
 ---
 
-## End-to-end: clone → run
+## New user: clone → Visual Genome → run
 
 ### 1. Clone
 
 ```bash
-git clone <your-fork-or-upstream-url> visualref
+git clone <repo-url> visualref
 cd visualref
 ```
 
-### 2. Image data layout
+### 2. Download Visual Genome (images + metadata)
 
-The indexer walks a directory tree and collects `jpg` / `png` (case variants). Put corpora under **`data/`** at the repo root (create the folder if needed).
+From the **repository root** (~15 GB + metadata):
 
-**COCO (example — val2014 only):**
-
-```text
-data/
-└── coco/
-    └── val2014/
-        ├── COCO_val2014_000000000042.jpg
-        └── ...
+```bash
+chmod +x scripts/download_visual_genome.sh   # once
+bash scripts/download_visual_genome.sh
 ```
 
-**Visual Genome:**
+This populates `data/visual_genome/` with images, `region_descriptions.json`, and `image_data.json`.
 
-```text
-data/
-└── visual_genome/
-    └── …/*.jpg
-```
-
-**Retail (example):**
-
-```text
-data/
-└── retail/
-    └── …/*.jpg
-```
-
-Paths written into `image_paths.txt` during indexing must still exist when you run the server (the API opens files by path).
-
-### 3. Python environment (backend)
+### 3. Python backend
 
 ```bash
 cd server
+cp .env.example .env
 python3 -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+cd ..
 ```
 
-### 4. SAM 3 (segmentation)
-
-From the **repository root**:
+### 4. SAM 3 + Ollama model (from repo root)
 
 ```bash
 bash scripts/setup_models.sh
 ```
 
-This clones/installs `server/sam3` if needed (`pip install -e .`) and pulls **Llama 3.2 Vision** via Ollama. If `server/sam3` is missing and the script clones it, ensure you have **git** and (for gated models) **Hugging Face** access.
-
-Manual equivalent:
+Ensure **Ollama** is installed; then in another terminal:
 
 ```bash
-cd server/sam3
-pip install -e .
-cd ../..
+ollama serve
+ollama pull llama3.2-vision
 ```
 
-### 5. Build the FAISS index
+### 5. Build the Visual Genome FAISS index
 
-Still from **repository root**, with `server/venv` created:
+From **repository root** (can take **1–2+ hours** on MPS/CPU; GPU helps):
 
 ```bash
-bash scripts/build_index.sh coco          # default: SigLIP
-# bash scripts/build_index.sh coco clip  # optional: CLIP + matching yaml in configs/demo
+bash scripts/build_index.sh
 ```
 
-Outputs (SigLIP example):
+Uses SigLIP and, when `region_descriptions.json` exists, builds a **hybrid** image+text index.
 
-```text
-faiss/coco/google/siglip-large-patch16-256/
-├── image_index.faiss
-└── image_paths.txt
-```
+### 6. Backend configuration (default = Visual Genome)
 
-Each line in `image_paths.txt` is an **absolute** path to an image file.
-
-To build everything you have under `data/` plus a combined index:
-
-```bash
-bash scripts/build_all_indexes.sh
-```
-
-### 6. Configure `server/.env`
-
-Paths below are **relative to the `server/` directory** (as in the default template).
+The template in `server/.env` should match:
 
 ```env
-CONFIG_PATH=../configs/demo/coco_siglip.yaml
-INDEX_PATH=../faiss/coco/google/siglip-large-patch16-256/image_index.faiss
+CONFIG_PATH=../configs/demo/vg_siglip.yaml
+INDEX_PATH=../faiss/visual_genome/google/siglip-large-patch16-256/image_index.faiss
 LOGS_PATH=../logs
 
 OLLAMA_URL=http://127.0.0.1:11434
@@ -169,52 +197,43 @@ OLLAMA_ENABLED=true
 SAM_BACKEND=sam3
 ```
 
-- **`CONFIG_PATH`** — YAML that sets `VLM_MODEL_FAMILY`, `VLM_MODEL_NAME`, `IMG_SIZE`, etc. Must match the **same** SigLIP/CLIP model used to build the index.
-- **`INDEX_PATH`** — must point at `image_index.faiss` next to its `image_paths.txt` in the same folder.
+**Switching to COCO:** comment/uncomment the **COCO** lines in the same file (change **both** `CONFIG_PATH` and `INDEX_PATH`) and run `bash scripts/build_index.sh coco` first.
 
-Switching datasets = change both `CONFIG_PATH` and `INDEX_PATH` to the matching pair (see `configs/demo/`).
-
-### 7. Demo YAML (`configs/demo/*.yaml`)
-
-Important keys (retrieval server):
-
-- `VLM_MODEL_FAMILY` / `VLM_MODEL_NAME` — must match index builder.
-- `IMG_SIZE` — square resize for search thumbnails; click coordinates from the UI are in this space.
-- `IMAGE_CORPUS_PATH` / `INDEX_PATH` inside YAML — legacy hints; the running server uses **`INDEX_PATH` from `.env`** for loading FAISS.
-
-### 8. Frontend environment
+### 7. Frontend
 
 ```bash
 cd client-next
-echo 'NEXT_PUBLIC_SERVER_URL=http://127.0.0.1:8001' > .env.local
+cp .env.example .env.local
 npm install
 cd ..
 ```
 
-For a remote API, set `NEXT_PUBLIC_SERVER_URL` to that host (scheme + port).
+Edit `.env.local` if the API is not on `http://127.0.0.1:8001`.
 
-### 9. Ollama (optional but recommended)
+### 8. Start
 
-```bash
-ollama serve    # terminal 1, or run as a service
-ollama pull llama3.2-vision
-```
-
-If Ollama is down, the backend still runs; feedback uses image embeddings only until vision is available.
-
-### 10. Start everything
-
-From the **repository root**:
+From **repository root**:
 
 ```bash
-chmod +x start.sh scripts/*.sh   # once
+chmod +x start.sh scripts/*.sh
 ./start.sh
 ```
 
-- Backend: `http://localhost:8001` (e.g. `GET /health`, `GET /sam_status`, `GET /ollama_status`)
-- Frontend: `http://localhost:3000`
+`start.sh` will:
 
-First backend start can take several minutes while SigLIP and SAM 3 load and HF caches fill.
+- Create **`server/.env`** or **`client-next/.env.local`** from **`.env.example`** if they are missing.
+- **Refuse to start** until the **FAISS** file in `INDEX_PATH` and its sibling **`image_paths.txt`** exist (finish indexing first).
+
+- **API:** http://localhost:8001 (`/health`, `/sam_status`, `/ollama_status`)
+- **UI:** http://localhost:3000
+
+First backend load may take minutes (SigLIP + SAM 3 + FAISS).
+
+---
+
+## Optional: MS-COCO val2014
+
+Add images under `data/coco/val2014/`, then `bash scripts/build_index.sh coco`. Point `server/.env` at `configs/demo/coco_siglip.yaml` and the matching `faiss/coco/.../image_index.faiss` (see `.env.example`).
 
 ---
 
@@ -224,9 +243,10 @@ First backend start can take several minutes while SigLIP and SAM 3 load and HF 
 |------|---------------------|
 | Start app | `./start.sh` |
 | Logs | `.logs/server.log`, `.logs/client.log` |
-| Rebuild index after new images | `bash scripts/build_index.sh <dataset>` |
-| Change corpus | New index + update `CONFIG_PATH` / `INDEX_PATH` in `server/.env` |
-| Ports busy | `start.sh` kills listeners on 8001 and 3000; or set `SERVER_PORT` / `CLIENT_PORT` |
+| Rebuild VG index | `bash scripts/build_index.sh` (or `bash scripts/build_index.sh vg`) |
+| Rebuild COCO index | `bash scripts/build_index.sh coco` |
+| Change corpus | New index + update **`CONFIG_PATH` + `INDEX_PATH`** in `server/.env` |
+| Ports | `start.sh` frees 8001 / 3000; or `SERVER_PORT` / `CLIENT_PORT` |
 
 ---
 
@@ -234,10 +254,10 @@ First backend start can take several minutes while SigLIP and SAM 3 load and HF 
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/search` | Text query → top‑k image paths + base64 previews |
-| POST | `/segment` | SAM 3 mask from points + optional preview-space coords |
-| POST | `/apply_feedback` | Rocchio update from SAM regions + text + optional Ollama captions |
-| POST | `/caption` | Ollama caption for one base64 image region |
+| POST | `/search` | Text query → top‑k paths + base64 previews |
+| POST | `/segment` | SAM 3 mask; VG corpus adds `vg_phrases` when available |
+| POST | `/apply_feedback` | Rocchio update (SAM crops, text, VG phrases, optional Ollama) |
+| POST | `/caption` | Ollama caption for one base64 region |
 | GET | `/health`, `/sam_status`, `/ollama_status`, `/metrics` | Status |
 
 ---
@@ -246,32 +266,26 @@ First backend start can take several minutes while SigLIP and SAM 3 load and HF 
 
 | Symptom | What to check |
 |---------|----------------|
-| `FAISS index file not found` | `INDEX_PATH` in `server/.env`; file exists relative to `server/` |
-| `Image path does not exist` | Paths in `image_paths.txt` still valid (same machine or synced data) |
-| SAM 3 import error | `cd server/sam3 && pip install -e .` |
-| SAM 3 / HF 401 | `huggingface-cli login`; accept model terms on Hugging Face |
-| Ollama “Vision OFF” | `ollama serve` + `ollama pull llama3.2-vision` |
-| Next.js `ETIMEDOUT` / API errors | `NEXT_PUBLIC_SERVER_URL` must match where uvicorn runs |
-| Next.js lockfile warning | A `package-lock.json` outside this repo can confuse Turbopack; remove stray lockfiles or set `turbopack.root` in `client-next/next.config.ts` per Next.js docs |
+| `FAISS index file not found` | Run `build_index.sh` for your corpus; `INDEX_PATH` in `server/.env` |
+| `Image path does not exist` | Rebuild index; keep `data/` paths stable or use absolute paths |
+| Corrupt / 0-byte VG images | Index builder skips tiny files; re-run build if needed |
+| SAM 3 / HF errors | `huggingface-cli login`; accept model terms |
+| Ollama unavailable | `ollama serve` + `ollama pull llama3.2-vision` |
+| UI timeout / `ETIMEDOUT` | `NEXT_PUBLIC_SERVER_URL` must reach the machine running uvicorn (localhost or LAN IP) |
+| Turbopack / lockfile warning | Stray `package-lock.json` outside `client-next` — remove or adjust Next config |
 
 ---
 
 ## Cloud GPU
 
-See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for rsync, `deploy/setup-cloud.sh`, and running uvicorn on `0.0.0.0:8001` with the Next.js app on your laptop.
-
-Optional container build from **repo root** (adjust `COPY` paths if you customize):
-
-```bash
-docker build -f deploy/Dockerfile -t visualref-api .
-```
+See **[deploy/DEPLOY.md](deploy/DEPLOY.md)** for rsync, remote uvicorn, and local Next.js.
 
 ---
 
-## Config directories (research / prompts)
+## Config directories
 
-- `configs/demo/` — retrieval backbones (SigLIP / CLIP) and dataset defaults.
-- `configs/captioning/` — used by older LLaVA-based server paths; the current Next.js + visual server stack uses **Ollama** for captions, configured in `server/.env`.
+- **`configs/demo/`** — Retrieval yaml per dataset (`vg_siglip.yaml`, optional `coco_siglip.yaml`).
+- VLM captions are served by **Ollama** (`server/.env`), not separate captioning configs.
 
 ---
 

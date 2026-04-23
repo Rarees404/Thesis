@@ -9,10 +9,12 @@ def resize_images(
     images: List[Image.Image],
     image_size: List[int] | Tuple[int],
 ) -> List[Image.Image]:
-    images_resized = [image.resize((image_size[0], image_size[1])) for image in images]
-    if images_resized[0].mode != 'RGB':
-        images_resized = [image.convert('RGB') for image in images_resized]
-    return images_resized
+    """Resize and ensure RGB mode for every image. Converts before resizing to avoid
+    palette/RGBA artifacts. Handles empty lists gracefully."""
+    return [
+        image.convert("RGB").resize((image_size[0], image_size[1]), Image.Resampling.BICUBIC)
+        for image in images
+    ]
 
 def image_to_base64(image: Image.Image) -> str:
     """Convert PIL Image to base64 string"""

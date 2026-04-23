@@ -101,20 +101,46 @@ class SAM3Segmenter:
 
         self.processor = Sam3Processor(model, device=actual_device)
         self._interactive = model.inst_interactive_predictor
+
+        # Fix: build_tracker() creates the interactive predictor's inner tracker with
+        # backbone=None (with_backbone=False by default). The backbone is only on the
+        # main SAM3 model. Share it so that _interactive.set_image() can call
+        # forward_image() without hitting AttributeError on None.
+        if (
+            self._interactive is not None
+            and hasattr(self._interactive, "model")
+            and getattr(self._interactive.model, "backbone", None) is None
+            and hasattr(model, "backbone")
+            and model.backbone is not None
+        ):
+            self._interactive.model.backbone = model.backbone
+            print("[SAM3] Shared backbone from main model → interactive predictor")
+
         self.device = actual_device
         self._current_path: Optional[str] = None
         self._current_image_size: Tuple[int, int] = (0, 0)
-        self._state: Optional[dict] = None
         self._interactive_set = False
         self._logit_cache: Dict[str, np.ndarray] = {}
+        self._LOGIT_CACHE_MAX = 50  # prevent unbounded memory growth on large corpora
         print(f"[SAM3] Ready on {actual_device}")
 
     def set_image(self, image: Image.Image, path: Optional[str] = None):
-        if path and path == self._current_path and self._state is not None:
+        # Skip re-encoding only when the path matches AND the predictor's
+        # internal _is_image_set flag confirms the image is still loaded.
+        # (sam1_task_predictor.set_image() calls reset_predictor() as its
+        # first action, so _is_image_set can become False without our wrapper
+        # noticing if anything triggers a reset between calls.)
+        already_set = (
+            path is not None
+            and path == self._current_path
+            and self._interactive_set
+            and getattr(self._interactive, "_is_image_set", False)
+        )
+        if already_set:
             return
-        self._state = self.processor.set_image(image)
         if self._interactive is not None:
-            self._interactive.set_image(np.array(image.convert("RGB")))
+            with torch.no_grad():
+                self._interactive.set_image(np.array(image.convert("RGB")))
             self._interactive_set = True
         self._current_path = path
         self._current_image_size = (image.height, image.width)
@@ -124,7 +150,17 @@ class SAM3Segmenter:
         if self._interactive is None or not self._interactive_set:
             raise RuntimeError("Interactive predictor not available — call set_image() first")
 
-        coords = np.array([[p["x"], p["y"]] for p in points], dtype=np.float32)
+        img_h, img_w = self._current_image_size
+        coords = np.array(
+            [
+                [
+                    max(0.0, min(float(p["x"]), img_w - 1 if img_w > 0 else float(p["x"]))),
+                    max(0.0, min(float(p["y"]), img_h - 1 if img_h > 0 else float(p["y"]))),
+                ]
+                for p in points
+            ],
+            dtype=np.float32,
+        )
         labels = np.array([p["label"] for p in points], dtype=np.int32)
         use_multimask = (len(points) == 1)
 
@@ -133,14 +169,15 @@ class SAM3Segmenter:
         has_negative = bool(np.any(labels == 0))
         prev_logits = None if has_negative else self._logit_cache.get(cache_key)
 
-        masks, scores, logits = self._interactive.predict(
-            point_coords=coords,
-            point_labels=labels,
-            box=box,
-            mask_input=prev_logits,
-            multimask_output=use_multimask,
-            return_logits=True,
-        )
+        with torch.no_grad():
+            masks, scores, logits = self._interactive.predict(
+                point_coords=coords,
+                point_labels=labels,
+                box=box,
+                mask_input=prev_logits,
+                multimask_output=use_multimask,
+                return_logits=True,
+            )
 
         if use_multimask and masks.shape[0] > 1:
             if np.all(labels == 1):
@@ -153,6 +190,10 @@ class SAM3Segmenter:
         if has_negative or not bool(np.all(labels == 1)):
             self._logit_cache.pop(cache_key, None)
         else:
+            # Evict oldest entry when cache is full (insertion-order eviction)
+            if cache_key not in self._logit_cache and len(self._logit_cache) >= self._LOGIT_CACHE_MAX:
+                oldest = next(iter(self._logit_cache))
+                del self._logit_cache[oldest]
             self._logit_cache[cache_key] = logits[best: best + 1]
         return {"mask": masks[best] > 0, "score": float(scores[best])}
 
@@ -236,10 +277,14 @@ def mask_to_rle(mask: np.ndarray) -> dict:
 def rle_to_mask(rle: dict) -> np.ndarray:
     """Decode a COCO-convention RLE back to a binary mask."""
     h, w = rle["size"]
-    flat = np.zeros(h * w, dtype=np.uint8)
+    n = h * w
+    flat = np.zeros(n, dtype=np.uint8)
     pos, val = 0, 0
-    for length in rle["counts"]:
-        flat[pos:pos + length] = val
+    for length in rle.get("counts", []):
+        if pos >= n:
+            break
+        end = min(pos + length, n)
+        flat[pos:end] = val
         pos += length
         val = 1 - val
     return flat.reshape(h, w).astype(bool)

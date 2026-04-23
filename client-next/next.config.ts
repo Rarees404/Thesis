@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /** Pin workspace root when dev is started from this directory (avoids stray parent lockfile warnings). */
+  turbopack: {
+    root: process.cwd(),
+  },
   async rewrites() {
     return [
       {

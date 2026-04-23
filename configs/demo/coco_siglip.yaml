@@ -1,7 +1,9 @@
-IMAGE_CORPUS_PATH: "data/coco/" 
+# Optional: MS-COCO val2014 — use after placing images under data/coco/val2014/
+# and running:  bash scripts/build_index.sh coco
+IMAGE_CORPUS_PATH: "data/coco/val2014/"
 INDEX_PATH: "faiss/coco/google/siglip-large-patch16-256/image_index.faiss"
 
-VLM_MODEL_FAMILY: "siglip" 
+VLM_MODEL_FAMILY: "siglip"
 VLM_MODEL_NAME: "google/siglip-large-patch16-256"
 IMG_SIZE: 256
 PATCH_SIZE: 16
@@ -11,4 +13,4 @@ SHOW_ANNOTATORS: True
 
 TOP_K: 5
 
-RETRIEVAL_LOGS_PATH: "logs/retrieval_logs_siglip_large.json"
+RETRIEVAL_LOGS_PATH: "logs/retrieval_logs_coco_siglip.json"

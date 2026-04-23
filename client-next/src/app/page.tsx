@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useAppStore } from "@/lib/store";
-import { searchImages, applyFeedback } from "@/lib/api";
-import { startMetricsPolling } from "@/lib/metrics-store";
+import { searchImages, applyFeedback, healthCheck } from "@/lib/api";
+import {
+  setDashboardMetricsActive,
+  useMetricsStore,
+} from "@/lib/metrics-store";
 
 import { NeuralBackground } from "@/components/neural-background";
 import { Header } from "@/components/header";
@@ -16,10 +19,30 @@ import { ErrorBanner } from "@/components/error-banner";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState("search");
+  const [backendReady, setBackendReady] = useState<boolean | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
-    startMetricsPolling();
+    // Poll /health until the backend responds (models can take 2-5 min to load)
+    const check = () => {
+      healthCheck()
+        .then(() => {
+          setBackendReady(true);
+          if (pollRef.current) clearInterval(pollRef.current);
+        })
+        .catch(() => setBackendReady(false));
+    };
+    check();
+    pollRef.current = setInterval(check, 5000);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  useEffect(() => {
+    const onDashboard = activeTab === "dashboard";
+    setDashboardMetricsActive(onDashboard);
+    if (onDashboard) void useMetricsStore.getState().poll();
+  }, [activeTab]);
+
   const store = useAppStore();
 
   const handleSearch = useCallback(async () => {
@@ -74,13 +97,17 @@ export default function Home() {
         img.boxes.length > 0 ? img.boxes : null
       );
 
-      const samList = images.map((_, i) => {
+      const samList = images.map((img, i) => {
         const annot = samAnnotations.get(i);
         if (!annot?.mask_rle) return null;
         const hasRelevant = annot.points.some((p) => p.label === 1);
         return {
           mask_rle: annot.mask_rle,
           label: hasRelevant ? ("Relevant" as const) : ("Irrelevant" as const),
+          // Include image path so server can do VG region lookup by image
+          image_path: img.path,
+          // Pre-computed IoU-matched VG phrases from /segment — reuse to skip re-querying
+          vg_phrases: annot.vg_phrases ?? [],
         };
       });
 
@@ -153,6 +180,19 @@ export default function Home() {
             <SearchBar onSearch={handleSearch} />
 
             <ErrorBanner />
+
+            {backendReady === false && (
+              <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
+                <svg className="h-4 w-4 animate-spin shrink-0" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                </svg>
+                <span>
+                  Backend is loading models (SigLIP + SAM 3) — this can take a few minutes on first run.
+                  Search will be enabled once ready.
+                </span>
+              </div>
+            )}
 
             <ImageGallery />
 

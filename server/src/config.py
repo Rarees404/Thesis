@@ -12,8 +12,6 @@ class ServerSettings(BaseSettings):
     config_path: Path | None = None
     index_path: Path | None = None
     logs_path: Path | None = None
-    captioning_config_path: Path | None = None
-
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2-vision"
     ollama_enabled: bool = True
@@ -22,7 +20,6 @@ class ServerSettings(BaseSettings):
 
     @field_validator(
         "config_path",
-        "captioning_config_path",
         "index_path",
         "logs_path",
         mode="before",
@@ -39,7 +36,14 @@ class ServerSettings(BaseSettings):
 settings = ServerSettings()
 
 
+def repo_root() -> Path:
+    """VisualRef repository root (parent of `server/`), independent of process cwd."""
+    return Path(__file__).resolve().parent.parent.parent
+
+
 def resolve_repo(p: str | Path) -> str:
+    """Resolve a path stored in configs or `image_paths.txt` relative to the repo root."""
     p = Path(p)
-    base = settings.base_dir
-    return str(p if p.is_absolute() else (base / p))
+    if p.is_absolute():
+        return str(p)
+    return str(repo_root() / p)

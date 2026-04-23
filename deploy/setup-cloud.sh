@@ -60,22 +60,21 @@ ok "Copied cloud .env (SAM_BACKEND=sam3)"
 
 # ── 5. Check data ──
 hdr "[5/6] Checking data files"
-FAISS_PATH="$ROOT_DIR/faiss/coco/google/siglip-large-patch16-256/image_index.faiss"
-DATA_PATH="$ROOT_DIR/data/coco/val2014"
+FAISS_PATH="$ROOT_DIR/faiss/visual_genome/google/siglip-large-patch16-256/image_index.faiss"
+DATA_PATH="$ROOT_DIR/data/visual_genome"
 
 if [ -f "$FAISS_PATH" ]; then
     ok "FAISS index found ($(du -sh "$FAISS_PATH" | cut -f1))"
 else
     echo "  ✗ FAISS index missing at: $FAISS_PATH"
-    echo "    Upload it: scp -r faiss/ user@cloud-ip:/path/to/visualref/"
+    echo "    Build on the instance or upload faiss/visual_genome/ (see README)."
 fi
 
 if [ -d "$DATA_PATH" ]; then
-    COUNT=$(ls "$DATA_PATH" | wc -l)
-    ok "COCO val2014 found ($COUNT images)"
+    ok "Visual Genome images directory present: $DATA_PATH"
 else
-    echo "  ✗ COCO images missing at: $DATA_PATH"
-    echo "    Upload: scp -r data/ user@cloud-ip:/path/to/visualref/"
+    echo "  ✗ Visual Genome images missing at: $DATA_PATH"
+    echo "    Run scripts/download_visual_genome.sh on the instance or rsync data/visual_genome/"
 fi
 
 # ── 6. Install & start Ollama ──

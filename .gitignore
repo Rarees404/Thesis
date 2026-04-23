@@ -164,9 +164,8 @@ cython_debug/
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+#  and can be added to the global gitignore or merged into this file.
+.idea/
 
 # Ruff stuff:
 .ruff_cache/
@@ -204,3 +203,15 @@ results/
 
 # SAM3 cloned repo (install locally)
 server/sam3/
+
+# Local editor / tooling state
+.claude/
+.DS_Store
+**/.DS_Store
+.logs/
+.pytest_cache/
+.ruff_cache/
+
+# OS cruft
+Thumbs.db
+Desktop.ini

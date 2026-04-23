@@ -4,12 +4,12 @@
 
 | Resource | Size | Purpose |
 |----------|------|---------|
-| COCO val2014 images | 6.3 GB | Image corpus for retrieval |
-| FAISS index | 158 MB | Pre-built SigLIP embeddings |
+| Visual Genome images + JSON | ~15 GB | Image corpus for retrieval |
+| FAISS index (VG, SigLIP) | ~hundreds of MB | Pre-built embeddings (build on instance or upload) |
 | SAM3 model | ~2.6 GB | Auto-downloaded from HuggingFace |
 | SigLIP model | ~1.1 GB | Auto-downloaded from HuggingFace |
 | Ollama + llama3.2-vision | ~4.7 GB | Optional VLM captioning |
-| **Total disk** | **~15 GB** | |
+| **Total disk** | **~20+ GB** | VG + models + index |
 
 **GPU requirement**: Any NVIDIA GPU with ≥16 GB VRAM (RTX 3090, RTX 4090, A100, etc.)
 
@@ -43,15 +43,15 @@ rsync -avz --exclude='node_modules' --exclude='venv' --exclude='__pycache__' \
   /Users/blackbox/Thesis_Proto/visualref/ \
   root@ssh5.vast.ai:/workspace/visualref/
 
-# Upload COCO val2014 images (6.3 GB — takes a while)
+# Upload Visual Genome data (large — or run download_visual_genome.sh on the instance)
 rsync -avz -e "ssh -p 12345" \
-  /Users/blackbox/Thesis_Proto/data/coco/val2014/ \
-  root@ssh5.vast.ai:/workspace/data/coco/val2014/
+  /path/to/visualref/data/visual_genome/ \
+  root@ssh5.vast.ai:/workspace/visualref/data/visual_genome/
 
-# Upload FAISS index (158 MB — fast)
+# Optional: upload a pre-built FAISS tree, or build on the GPU with scripts/build_index.sh
 rsync -avz -e "ssh -p 12345" \
-  /Users/blackbox/Thesis_Proto/visualref/faiss/ \
-  root@ssh5.vast.ai:/workspace/visualref/faiss/
+  /path/to/visualref/faiss/visual_genome/ \
+  root@ssh5.vast.ai:/workspace/visualref/faiss/visual_genome/
 ```
 
 ### Step 5: Set up the server on the GPU

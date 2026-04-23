@@ -8,6 +8,7 @@ numpy==1.25.2
 pillow==11.1.0
 scipy==1.15.1
 scikit-learn==1.2.2
+scikit-image
 tqdm==4.67.1
 protobuf==6.30.2
 datasets==3.3.2

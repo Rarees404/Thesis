@@ -1,4 +1,6 @@
-IMAGE_CORPUS_PATH: "data/"
+# Use after:  bash scripts/build_index.sh combined  (COCO + VG image dirs merged in one index)
+# IMAGE_CORPUS_PATH still points at VG so region_descriptions.json can load for phrases.
+IMAGE_CORPUS_PATH: "data/visual_genome/"
 INDEX_PATH: "faiss/combined/google/siglip-large-patch16-256/image_index.faiss"
 
 VLM_MODEL_FAMILY: "siglip"
