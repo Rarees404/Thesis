@@ -162,7 +162,7 @@ export default function Home() {
                 </p>
                 <div className="flex flex-wrap gap-3 justify-center mt-2">
                   <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
-                    SAM 3 Segmentation
+                    SAM 2 Segmentation
                   </span>
                   <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
                     Llama 3.2 Vision
@@ -188,7 +188,7 @@ export default function Home() {
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                 </svg>
                 <span>
-                  Backend is loading models (SigLIP + SAM 3) — this can take a few minutes on first run.
+                  Backend is loading models (SigLIP + SAM 2) — this can take a few minutes on first run.
                   Search will be enabled once ready.
                 </span>
               </div>

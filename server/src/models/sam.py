@@ -1,5 +1,5 @@
 """
-Segmentation — SAM 3 only (facebook/sam3 via HuggingFace Hub).
+Segmentation — SAM 2.1 (facebook/sam2.1-hiera-base-plus via HuggingFace Hub).
 Point-prompt interactive masks for click-to-segment relevant/irrelevant regions.
 """
 
@@ -73,82 +73,58 @@ def _select_best_mask(
 
 
 # ---------------------------------------------------------------------------
-# SAM 3  (point prompts — facebook/sam3 on HuggingFace)
+# SAM 2.1  (point prompts — facebook/sam2.1-hiera-base-plus on HuggingFace)
 # ---------------------------------------------------------------------------
 
-class SAM3Segmenter:
-    def __init__(self, device: str = "cpu"):
-        import sam3 as _sam3_pkg
-        from sam3.model_builder import build_sam3_image_model
-        from sam3.model.sam3_image_processor import Sam3Processor
+class SAM2Segmenter:
+    def __init__(
+        self,
+        device: str = "cpu",
+        model_id: str = "facebook/sam2.1-hiera-base-plus",
+    ):
+        from sam2.build_sam import build_sam2_hf
+        from sam2.sam2_image_predictor import SAM2ImagePredictor
 
-        bpe_path = os.path.join(_sam3_pkg.__path__[0], "sam3", "assets", "bpe_simple_vocab_16e6.txt.gz")
-
-        print(f"[SAM3] Loading model (downloading from HuggingFace Hub → facebook/sam3)...")
-        model = build_sam3_image_model(device=device, enable_inst_interactivity=True, bpe_path=bpe_path)
-
+        print(f"[SAM2] Loading {model_id} (downloading from HuggingFace Hub on first run)...")
         try:
-            model = model.to(device)
+            model = build_sam2_hf(model_id, device=device)
         except Exception as e:
-            print(f"[SAM3] Could not move model to {device} ({e}), falling back to CPU")
+            print(f"[SAM2] Could not load on {device} ({e}), falling back to CPU")
             device = "cpu"
-            model = model.to("cpu")
+            model = build_sam2_hf(model_id, device="cpu")
 
         try:
             actual_device = str(next(model.parameters()).device)
         except StopIteration:
             actual_device = device
 
-        self.processor = Sam3Processor(model, device=actual_device)
-        self._interactive = model.inst_interactive_predictor
-
-        # Fix: build_tracker() creates the interactive predictor's inner tracker with
-        # backbone=None (with_backbone=False by default). The backbone is only on the
-        # main SAM3 model. Share it so that _interactive.set_image() can call
-        # forward_image() without hitting AttributeError on None.
-        if (
-            self._interactive is not None
-            and hasattr(self._interactive, "model")
-            and getattr(self._interactive.model, "backbone", None) is None
-            and hasattr(model, "backbone")
-            and model.backbone is not None
-        ):
-            self._interactive.model.backbone = model.backbone
-            print("[SAM3] Shared backbone from main model → interactive predictor")
-
+        self.predictor = SAM2ImagePredictor(model)
         self.device = actual_device
         self._current_path: Optional[str] = None
         self._current_image_size: Tuple[int, int] = (0, 0)
-        self._interactive_set = False
         self._logit_cache: Dict[str, np.ndarray] = {}
         self._LOGIT_CACHE_MAX = 50  # prevent unbounded memory growth on large corpora
-        print(f"[SAM3] Ready on {actual_device}")
+        print(f"[SAM2] Ready on {actual_device}")
 
     def set_image(self, image: Image.Image, path: Optional[str] = None):
         # Skip re-encoding only when the path matches AND the predictor's
         # internal _is_image_set flag confirms the image is still loaded.
-        # (sam1_task_predictor.set_image() calls reset_predictor() as its
-        # first action, so _is_image_set can become False without our wrapper
-        # noticing if anything triggers a reset between calls.)
         already_set = (
             path is not None
             and path == self._current_path
-            and self._interactive_set
-            and getattr(self._interactive, "_is_image_set", False)
+            and getattr(self.predictor, "_is_image_set", False)
         )
         if already_set:
             return
-        if self._interactive is not None:
-            with torch.no_grad():
-                self._interactive.set_image(np.array(image.convert("RGB")))
-            self._interactive_set = True
+        with torch.no_grad():
+            self.predictor.set_image(np.array(image.convert("RGB")))
         self._current_path = path
         self._current_image_size = (image.height, image.width)
 
     def segment_points(self, points: List[Dict], image_path: Optional[str] = None) -> Dict:
-        """Point-based interactive segmentation via SAM 3."""
-        if self._interactive is None or not self._interactive_set:
-            raise RuntimeError("Interactive predictor not available — call set_image() first")
+        """Point-based interactive segmentation via SAM 2.1."""
+        if not getattr(self.predictor, "_is_image_set", False):
+            raise RuntimeError("Image not set — call set_image() first")
 
         img_h, img_w = self._current_image_size
         coords = np.array(
@@ -170,7 +146,7 @@ class SAM3Segmenter:
         prev_logits = None if has_negative else self._logit_cache.get(cache_key)
 
         with torch.no_grad():
-            masks, scores, logits = self._interactive.predict(
+            masks, scores, logits = self.predictor.predict(
                 point_coords=coords,
                 point_labels=labels,
                 box=box,
@@ -204,22 +180,23 @@ class SAM3Segmenter:
             self._logit_cache.clear()
 
 
-def build_segmenter(device: str, checkpoints_dir: str, backend: str = "sam3"):
+def build_segmenter(device: str, checkpoints_dir: str, backend: str = "sam2"):
     """
-    Returns (segmenter, model_type) where model_type is 'sam3' or 'none'.
-    SAM 3 weights are downloaded automatically from HuggingFace Hub.
+    Returns (segmenter, model_type) where model_type is 'sam2' or 'none'.
+    SAM 2.1 weights are downloaded automatically from HuggingFace Hub.
     """
     backend = backend.lower().strip()
-    if backend not in ("auto", "sam3"):
-        print(f"[SAM] Unknown backend '{backend}', defaulting to sam3")
-        backend = "sam3"
+    if backend not in ("auto", "sam2"):
+        print(f"[SAM] Unknown backend '{backend}', defaulting to sam2")
+        backend = "sam2"
 
     try:
-        seg = SAM3Segmenter(device=device)
-        return seg, "sam3"
+        seg = SAM2Segmenter(device=device)
+        return seg, "sam2"
     except Exception as e:
-        print(f"[SAM] SAM 3 failed to load: {e}")
-        print("[SAM] Make sure sam3 is installed: cd server/sam3 && pip install -e .")
+        print(f"[SAM] SAM 2 failed to load: {e}")
+        print("[SAM] Make sure sam2 is installed: pip install git+https://github.com/facebookresearch/sam2.git")
+        print("[SAM] First-run also requires outbound network access to huggingface.co")
         return None, "none"
 
 

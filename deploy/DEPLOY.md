@@ -6,7 +6,7 @@
 |----------|------|---------|
 | Visual Genome images + JSON | ~15 GB | Image corpus for retrieval |
 | FAISS index (VG, SigLIP) | ~hundreds of MB | Pre-built embeddings (build on instance or upload) |
-| SAM3 model | ~2.6 GB | Auto-downloaded from HuggingFace |
+| SAM 2 model | ~162 MB | Auto-downloaded from HuggingFace (public, no auth) |
 | SigLIP model | ~1.1 GB | Auto-downloaded from HuggingFace |
 | Ollama + llama3.2-vision | ~4.7 GB | Optional VLM captioning |
 | **Total disk** | **~20+ GB** | VG + models + index |
@@ -61,11 +61,7 @@ cd /workspace/visualref
 bash deploy/setup-cloud.sh
 ```
 
-If SAM3 needs HuggingFace auth:
-```bash
-pip install huggingface_hub
-huggingface-cli login
-```
+(SAM 2 is public — no HuggingFace login needed.)
 
 ### Step 6: Start the server
 ```bash
@@ -76,7 +72,7 @@ python -m uvicorn src.retrieval_server_visual:app --host 0.0.0.0 --port 8001
 
 You should see:
 ```
-[startup] SAM backend: sam3 (requested: sam3)
+[startup] SAM backend: sam2 (requested: sam2)
 [startup] Ollama vision: ...
 ```
 
@@ -111,7 +107,7 @@ Same steps, but use [runpod.io](https://www.runpod.io/):
 
 Edit `server/.env`:
 ```
-SAM_BACKEND=sam3
+SAM_BACKEND=sam2
 ```
 
 Run locally with `./start.sh` as before.

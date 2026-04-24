@@ -16,7 +16,7 @@ class ServerSettings(BaseSettings):
     ollama_model: str = "llama3.2-vision"
     ollama_enabled: bool = True
 
-    sam_backend: str = "sam3"
+    sam_backend: str = "sam2"
 
     @field_validator(
         "config_path",

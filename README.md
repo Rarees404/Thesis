@@ -1,10 +1,10 @@
 # VisualReF — Visual Relevance Feedback for Interactive Image Retrieval
 
-Prototype from the RecSys ’25 demo paper: users search with natural language, click on image regions to mark what they want more or less of (**SAM 3** segmentation), and optionally use **Ollama + Llama 3.2 Vision** to auto-caption regions. On **Visual Genome**, human **region descriptions** are used when available (faster than vision-only captions). Feedback updates the query with **Rocchio**-style refinement over **SigLIP** embeddings and a **FAISS** index.
+Prototype from the RecSys ’25 demo paper: users search with natural language, click on image regions to mark what they want more or less of (**SAM 2** segmentation), and optionally use **Ollama + Llama 3.2 Vision** to auto-caption regions. On **Visual Genome**, human **region descriptions** are used when available (faster than vision-only captions). Feedback updates the query with **Rocchio**-style refinement over **SigLIP** embeddings and a **FAISS** index.
 
 **Default corpus:** **Visual Genome** (~108k images). **COCO** (e.g. val2014) is optional.
 
-**Stack:** FastAPI (`server/`) · Next.js (`client-next/`) · SigLIP retrieval · SAM 3 · Ollama `llama3.2-vision`.
+**Stack:** FastAPI (`server/`) · Next.js (`client-next/`) · SigLIP retrieval · SAM 2 · Ollama `llama3.2-vision`.
 
 ---
 
@@ -37,7 +37,7 @@ flowchart LR
     API[FastAPI :8001]
     SigLIP[SigLIP encoder]
     FAISS[FAISS index]
-    SAM[SAM 3]
+    SAM[SAM 2]
     Ollama[Ollama llama3.2-vision]
     VGJSON[VG region_descriptions.json]
   end
@@ -69,17 +69,16 @@ flowchart LR
 | Path | Role |
 |------|------|
 | `start.sh` | Starts FastAPI (8001) + Next.js (3000), health checklist |
-| `server/` | Backend: SigLIP, FAISS, SAM 3, VG region index, Ollama client |
-| `server/.env` | **`CONFIG_PATH`**, **`INDEX_PATH`**, Ollama, `SAM_BACKEND=sam3` (copy from `.env.example`) |
+| `server/` | Backend: SigLIP, FAISS, SAM 2, VG region index, Ollama client |
+| `server/.env` | **`CONFIG_PATH`**, **`INDEX_PATH`**, Ollama, `SAM_BACKEND=sam2` (copy from `.env.example`) |
 | `server/.env.example` | Committed template; **Visual Genome** defaults |
-| `server/sam3/` | SAM 3 package (`pip install -e .`; see `scripts/setup_models.sh`) |
 | `server/venv/` | Python virtualenv (local; not committed) |
 | `client-next/` | Next.js UI; **`NEXT_PUBLIC_SERVER_URL`** → backend |
 | `client-next/.env.example` | Template for `.env.local` |
 | `configs/demo/*.yaml` | Corpus yaml (`vg_siglip.yaml`; `coco_siglip.yaml` if you add COCO data) |
 | **`data/`** | **Image corpora + VG metadata** (not in git; you download or link) |
 | **`faiss/`** | **Built indexes:** `image_index.faiss` + `image_paths.txt` per dataset |
-| `scripts/setup_models.sh` | SAM 3 + Ollama model setup |
+| `scripts/setup_models.sh` | SAM 2 + Ollama model setup |
 | `scripts/download_visual_genome.sh` | Downloads VG images + `region_descriptions.json` + `image_data.json` |
 | `scripts/build_index.sh` | Builds FAISS (+ VG hybrid if metadata present) |
 | `scripts/build_all_indexes.sh` | Rebuilds the **Visual Genome** index (same as `build_index.sh` with no args) |
@@ -120,9 +119,9 @@ After moving or re-downloading images, **rebuild** the matching index so `image_
 | Python | 3.10–3.12 (3.11 used in dev) |
 | Node.js | 18+ |
 | Disk | VG ~15 GB images + JSON; HF cache; Ollama model weights (optional COCO is separate) |
-| GPU | Optional; **MPS** (macOS) or **CUDA** speeds SigLIP, SAM 3, indexing |
+| GPU | Optional; **MPS** (macOS) or **CUDA** speeds SigLIP, SAM 2, indexing |
 | Ollama | Optional captions: [ollama.com](https://ollama.com) — `ollama pull llama3.2-vision` |
-| Hugging Face | SAM 3 may be gated — `huggingface-cli login` if needed |
+| Hugging Face | SAM 2 weights are public — no login required |
 
 ---
 
@@ -158,7 +157,7 @@ pip install -r requirements.txt
 cd ..
 ```
 
-### 4. SAM 3 + Ollama model (from repo root)
+### 4. SAM 2 + Ollama model (from repo root)
 
 ```bash
 bash scripts/setup_models.sh
@@ -194,7 +193,7 @@ OLLAMA_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=llama3.2-vision
 OLLAMA_ENABLED=true
 
-SAM_BACKEND=sam3
+SAM_BACKEND=sam2
 ```
 
 **Switching to COCO:** comment/uncomment the **COCO** lines in the same file (change **both** `CONFIG_PATH` and `INDEX_PATH`) and run `bash scripts/build_index.sh coco` first.
@@ -227,7 +226,7 @@ chmod +x start.sh scripts/*.sh
 - **API:** http://localhost:8001 (`/health`, `/sam_status`, `/ollama_status`)
 - **UI:** http://localhost:3000
 
-First backend load may take minutes (SigLIP + SAM 3 + FAISS).
+First backend load may take minutes (SigLIP + SAM 2 + FAISS).
 
 ---
 
@@ -255,7 +254,7 @@ Add images under `data/coco/val2014/`, then `bash scripts/build_index.sh coco`. 
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/search` | Text query → top‑k paths + base64 previews |
-| POST | `/segment` | SAM 3 mask; VG corpus adds `vg_phrases` when available |
+| POST | `/segment` | SAM 2 mask; VG corpus adds `vg_phrases` when available |
 | POST | `/apply_feedback` | Rocchio update (SAM crops, text, VG phrases, optional Ollama) |
 | POST | `/caption` | Ollama caption for one base64 region |
 | GET | `/health`, `/sam_status`, `/ollama_status`, `/metrics` | Status |
@@ -269,7 +268,7 @@ Add images under `data/coco/val2014/`, then `bash scripts/build_index.sh coco`. 
 | `FAISS index file not found` | Run `build_index.sh` for your corpus; `INDEX_PATH` in `server/.env` |
 | `Image path does not exist` | Rebuild index; keep `data/` paths stable or use absolute paths |
 | Corrupt / 0-byte VG images | Index builder skips tiny files; re-run build if needed |
-| SAM 3 / HF errors | `huggingface-cli login`; accept model terms |
+| SAM 2 load errors | Rerun `bash scripts/setup_models.sh`; verify outbound HTTPS to `huggingface.co` |
 | Ollama unavailable | `ollama serve` + `ollama pull llama3.2-vision` |
 | UI timeout / `ETIMEDOUT` | `NEXT_PUBLIC_SERVER_URL` must reach the machine running uvicorn (localhost or LAN IP) |
 | Turbopack / lockfile warning | Stray `package-lock.json` outside `client-next` — remove or adjust Next config |

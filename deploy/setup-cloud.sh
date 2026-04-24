@@ -32,31 +32,23 @@ hdr "[2/6] Installing Python dependencies"
 pip install -r requirements.txt -q
 pip install requests -q
 
-# Install SAM3
-if [ -d "$SERVER_DIR/sam3" ]; then
-    cd "$SERVER_DIR/sam3"
-    pip install -e . -q
-    cd "$SERVER_DIR"
-    ok "SAM3 installed"
+# Install SAM 2 (public — no HuggingFace login needed)
+if python -c "import sam2" 2>/dev/null; then
+    ok "sam2 already installed"
 else
-    info "sam3/ not found — clone it: git clone https://github.com/facebookresearch/sam3.git server/sam3"
+    pip install "git+https://github.com/facebookresearch/sam2.git" -q
+    ok "SAM 2 installed"
 fi
 ok "Dependencies installed"
 
-# ── 3. HuggingFace login (for SAM3 gated model) ──
-hdr "[3/6] HuggingFace authentication"
-if python3 -c "from huggingface_hub import HfApi; HfApi().whoami()" 2>/dev/null; then
-    ok "Already logged in to HuggingFace"
-else
-    info "SAM3 requires HuggingFace access. Run:"
-    echo "       huggingface-cli login"
-    echo "       (Use a token from https://huggingface.co/settings/tokens)"
-fi
+# ── 3. HuggingFace (SAM 2 weights are public, no auth needed) ──
+hdr "[3/6] HuggingFace cache"
+info "SAM 2.1 weights auto-download from HuggingFace Hub on first run (public model)."
 
 # ── 4. Use cloud .env ──
-hdr "[4/6] Configuring for cloud (SAM3 + CUDA)"
+hdr "[4/6] Configuring for cloud (SAM 2 + CUDA)"
 cp "$SCRIPT_DIR/env.cloud" "$SERVER_DIR/.env"
-ok "Copied cloud .env (SAM_BACKEND=sam3)"
+ok "Copied cloud .env (SAM_BACKEND=sam2)"
 
 # ── 5. Check data ──
 hdr "[5/6] Checking data files"

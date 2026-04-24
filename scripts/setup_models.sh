@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # =========================================================================
-# setup_models.sh — Download and install SAM 3 + Ollama 3.2 Vision
+# setup_models.sh — Download and install SAM 2 + Ollama 3.2 Vision
 # Run from the repository root: bash scripts/setup_models.sh
 # =========================================================================
 
@@ -10,27 +10,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 SERVER_DIR="$REPO_ROOT/server"
 
+# Prefer the server venv's pip/python if present, so the install lands in the
+# same environment the backend will run under.
+if [ -x "$SERVER_DIR/venv/bin/python" ]; then
+    PY="$SERVER_DIR/venv/bin/python"
+    PIP="$SERVER_DIR/venv/bin/pip"
+else
+    PY="$(command -v python3 || command -v python)"
+    PIP="$(command -v pip3 || command -v pip)"
+fi
+
 echo "========================================"
 echo "  VisualReF — Model Setup"
 echo "========================================"
 echo ""
 
-# ----- 1. SAM 3 (facebook/sam3 from GitHub) -----
-echo "[1/3] Setting up SAM 3..."
-SAM3_DIR="$SERVER_DIR/sam3"
-
-if [ -d "$SAM3_DIR" ] && [ -f "$SAM3_DIR/pyproject.toml" ]; then
-    echo "  SAM 3 source already present at $SAM3_DIR"
+# ----- 1. SAM 2 (facebook/sam2 — public, no HF auth required) -----
+echo "[1/3] Setting up SAM 2..."
+if "$PY" -c "import sam2" 2>/dev/null; then
+    echo "  sam2 Python package already installed"
 else
-    echo "  Cloning facebook/sam3 into $SAM3_DIR..."
-    git clone https://github.com/facebookresearch/sam3.git "$SAM3_DIR"
+    echo "  Installing sam2 from GitHub (facebookresearch/sam2)..."
+    "$PIP" install "git+https://github.com/facebookresearch/sam2.git" 2>&1 | tail -3
 fi
-
-echo "  Installing SAM 3 as editable package..."
-cd "$SAM3_DIR"
-pip install -e . 2>&1 | tail -3
-cd "$REPO_ROOT"
-echo "  SAM 3 installed. Weights will download from HuggingFace on first run."
+echo "  SAM 2 ready. Weights (~162 MB for base_plus) download from HuggingFace on first run."
 echo ""
 
 # ----- 2. Ollama -----

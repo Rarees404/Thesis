@@ -104,7 +104,7 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
                     ? "bg-violet-500/10 text-violet-400 ring-1 ring-violet-500/20"
                     : "bg-amber-500/10 text-amber-400 ring-1 ring-amber-500/20"
                 }`}
-                title={samLoaded ? "SAM 3 ready" : "SAM 3 loading…"}
+                title={samLoaded ? "SAM 2 ready" : "SAM 2 loading…"}
               >
                 {samLoaded ? "SAM Ready" : "SAM Loading…"}
               </span>

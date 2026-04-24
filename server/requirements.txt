@@ -19,5 +19,5 @@ psutil
 pytest
 requests
 pyyaml
-# SAM 3 — install separately: cd server/sam3 && pip install -e .
+# SAM 2 — install separately: pip install git+https://github.com/facebookresearch/sam2.git
 # Or run: bash scripts/setup_models.sh

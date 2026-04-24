@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # VisualRef — Full-stack startup script
-# Starts Ollama (llama3.2-vision), the backend (FastAPI + SigLIP + SAM3),
+# Starts Ollama (llama3.2-vision), the backend (FastAPI + SigLIP + SAM 2),
 # and the frontend (Next.js), then runs a health checklist to confirm readiness.
 #
 set -euo pipefail
@@ -265,7 +265,7 @@ ok "Ports $SERVER_PORT and $CLIENT_PORT are free"
 # ────────────────────────────────────────────────────────────────────────────
 hdr "[4/6] Starting backend  (port $SERVER_PORT)"
 # ────────────────────────────────────────────────────────────────────────────
-info "Loading SigLIP + SAM3 — this may take 2–5 min on first launch…"
+info "Loading SigLIP + SAM 2 — this may take 2–5 min on first launch…"
 (
     cd "$SERVER_DIR"
     source venv/bin/activate

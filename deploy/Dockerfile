@@ -9,15 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY server/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt requests
 
-# Install SAM3 from the local clone
-COPY server/sam3 /app/sam3
-RUN cd /app/sam3 && pip install --no-cache-dir -e .
+# Install SAM 2 (public model, pulls from GitHub; weights download from HF Hub on first run)
+RUN pip install --no-cache-dir "git+https://github.com/facebookresearch/sam2.git"
 
 # Copy server code
 COPY server/src /app/src
 COPY configs /app/../configs
 
-# Cloud .env — SAM3 on CUDA, Ollama on localhost
+# Cloud .env — SAM 2 on CUDA, Ollama on localhost
 COPY deploy/env.cloud /app/.env
 
 EXPOSE 8001
