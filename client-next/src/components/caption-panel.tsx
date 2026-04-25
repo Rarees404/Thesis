@@ -22,7 +22,6 @@ export function CaptionPanel() {
   const [generating, setGenerating] = useState(false);
   const [captions, setCaptions] = useState<Map<number, CaptionResult>>(new Map());
   const [error, setError] = useState<string | null>(null);
-  const [ollamaReady, setOllamaReady] = useState<boolean | null>(null);
 
   if (images.length === 0) return null;
 
@@ -36,7 +35,6 @@ export function CaptionPanel() {
 
     try {
       const status = await ollamaStatus();
-      setOllamaReady(status.available);
       if (!status.available) {
         setError(
           "Ollama is not running. Start it with: ollama serve, then pull the model: ollama pull llama3.2-vision"

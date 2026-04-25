@@ -1,18 +1,22 @@
 
 import asyncio
+import logging
 import os
 import time
 import platform
 import subprocess
+import uuid
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
+
+import gc
 
 import numpy as np
 import psutil
 import torch
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from PIL import Image as PILImage
 
@@ -25,6 +29,7 @@ from src.utils.utils import load_yaml
 from contextlib import asynccontextmanager
 
 _start_time = time.time()
+logger = logging.getLogger(__name__)
 
 # Short TTL cache for /metrics — powermetrics and cpu_percent sampling are costly if polled often.
 _metrics_cache: dict | None = None
@@ -48,9 +53,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Retrieval Server", lifespan=lifespan)
 
+_cors_origins = [
+    origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -58,7 +67,8 @@ app.add_middleware(
 
 class SearchRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=50)
+    session_id: Optional[str] = None
 
 
 class SearchResponse(BaseModel):
@@ -70,17 +80,19 @@ class SearchResponse(BaseModel):
     # Dimensions of each base64 preview (same as IMG_SIZE in config)
     preview_width: int
     preview_height: int
+    session_id: str
 
 
 class ProcessApplyFeedbackRequest(BaseModel):
     query: str
-    top_k: int
+    top_k: int = Field(ge=1, le=50)
     relevant_image_paths: List[str]
     relevant_captions: str
     irrelevant_captions: str
     annotator_json_boxes_list: List[Any]
     sam_annotations: Optional[List[Any]] = None
     fuse_initial_query: bool = False
+    session_id: Optional[str] = None
 
 
 class ProcessApplyFeedbackResponse(BaseModel):
@@ -91,6 +103,7 @@ class ProcessApplyFeedbackResponse(BaseModel):
     message: str
     preview_width: int
     preview_height: int
+    session_id: str
 
 
 class SegmentPoint(BaseModel):
@@ -120,12 +133,13 @@ class SegmentResponse(BaseModel):
     width: int
     height: int
     vg_phrases: Optional[List[str]] = None
-    # Pre-computed Ollama caption (from cache, or None if not yet ready)
     cached_caption: Optional[str] = None
+    # False when Ollama is disabled — tells the frontend not to start caption polling.
+    captioning_available: bool = False
 
 
 class CaptionRequest(BaseModel):
-    image_b64: str
+    image_b64: str = Field(max_length=8_000_000)
     query: str
     label: str = "Relevant"
     user_hint: Optional[str] = None
@@ -190,6 +204,53 @@ def _caption_cache_key(image_path: str, label: str, query: str, hint: str = "") 
     return f"{image_path}::{label}::{query}::{hint}"
 
 
+def _new_session_id() -> str:
+    return uuid.uuid4().hex
+
+
+def _safe_session_id(session_id: Optional[str]) -> str:
+    return session_id.strip() if session_id and session_id.strip() else _new_session_id()
+
+
+def _allowed_corpus_paths() -> set[str]:
+    if retrieval_service is None:
+        return set()
+    return {os.path.realpath(p) for p in retrieval_service.candidate_image_paths}
+
+
+def _assert_corpus_path(path: str, allowed: set[str]):
+    if os.path.realpath(path) not in allowed:
+        raise HTTPException(status_code=403, detail="Image path not in search corpus")
+
+
+def _validate_feedback_paths(request: ProcessApplyFeedbackRequest):
+    if len(request.annotator_json_boxes_list) != len(request.relevant_image_paths):
+        raise HTTPException(status_code=400, detail="Feedback boxes must align with image paths")
+    if request.sam_annotations is not None and len(request.sam_annotations) != len(request.relevant_image_paths):
+        raise HTTPException(status_code=400, detail="SAM annotations must align with image paths")
+    allowed = _allowed_corpus_paths()
+    for path in request.relevant_image_paths:
+        _assert_corpus_path(path, allowed)
+    if request.sam_annotations:
+        for ann in request.sam_annotations:
+            if ann and ann.get("image_path"):
+                _assert_corpus_path(ann["image_path"], allowed)
+
+
+def _internal_error(context: str, exc: Exception) -> HTTPException:
+    logger.exception("%s failed", context)
+    return HTTPException(status_code=500, detail=f"{context} failed")
+
+
+def _log_task_exception(task: asyncio.Task):
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.exception("Background task failed", exc_info=exc)
+
+
 async def _background_caption(
     image_path: str,
     label: str,
@@ -251,6 +312,10 @@ async def _background_caption(
 async def startup_event():
     global retrieval_service, sam_segmenter, sam_model_type, vg_index
 
+    if settings.config_path is None:
+        raise RuntimeError("CONFIG_PATH is not set")
+    if settings.index_path is None:
+        raise RuntimeError("INDEX_PATH is not set")
     config = load_yaml(settings.config_path)
     if torch.cuda.is_available():
         device = "cuda"
@@ -311,11 +376,10 @@ async def search_images(request: SearchRequest):
         raise HTTPException(status_code=503, detail="Retrieval service not ready — models still loading")
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
-    if request.top_k < 1 or request.top_k > 50:
-        raise HTTPException(status_code=400, detail="top_k must be between 1 and 50")
+    session_id = _safe_session_id(request.session_id)
     try:
         def _run():
-            return retrieval_service.search_images(request.query, request.top_k)
+            return retrieval_service.search_images(request.query, request.top_k, session_id=session_id)
         images_b64, scores, image_paths = await asyncio.to_thread(_run)
         pw, ph = _preview_side()
         return SearchResponse(
@@ -326,10 +390,10 @@ async def search_images(request: SearchRequest):
             message="Search completed successfully",
             preview_width=pw,
             preview_height=ph,
+            session_id=session_id,
         )
     except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error("Search", e)
 
 
 @app.post("/apply_feedback", response_model=ProcessApplyFeedbackResponse)
@@ -338,6 +402,8 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
         raise HTTPException(status_code=503, detail="Retrieval service not ready — models still loading")
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    session_id = _safe_session_id(request.session_id)
+    _validate_feedback_paths(request)
     try:
         def _run():
             return retrieval_service.process_and_apply_feedback(
@@ -352,6 +418,8 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
                 ollama_available=ollama_available,
                 vg_region_index=vg_index,
                 caption_cache=_caption_cache,
+                cache_key_builder=_caption_cache_key,
+                session_id=session_id,
             )
         images_b64, scores, image_paths = await asyncio.to_thread(_run)
         pw, ph = _preview_side()
@@ -363,10 +431,10 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
             message="Feedback applied successfully",
             preview_width=pw,
             preview_height=ph,
+            session_id=session_id,
         )
     except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error("Feedback", e)
 
 
 @app.post("/segment", response_model=SegmentResponse)
@@ -374,9 +442,7 @@ async def segment_image(request: SegmentRequest):
     if sam_segmenter is None:
         raise HTTPException(status_code=503, detail="No SAM model loaded")
     if retrieval_service is not None:
-        allowed = set(retrieval_service.candidate_image_paths)
-        if request.image_path not in allowed:
-            raise HTTPException(status_code=403, detail="Image path not in search corpus")
+        _assert_corpus_path(request.image_path, _allowed_corpus_paths())
     if not request.points:
         raise HTTPException(status_code=400, detail="At least one point is required")
     try:
@@ -412,14 +478,18 @@ async def segment_image(request: SegmentRequest):
                 except Exception as vg_err:
                     print(f"[SAM] VG phrase lookup failed (non-fatal): {vg_err}")
 
-            return SegmentResponse(
+            resp = SegmentResponse(
                 mask_rle=rle,
                 region_b64=region_b64,
                 score=result["score"],
                 width=cw,
                 height=ch,
                 vg_phrases=phrases if phrases else None,
-            ), region_b64, bbox_orig
+            )
+            # Free large intermediate arrays before returning
+            del mask_full, mask, preview, region, result
+            gc.collect()
+            return resp, region_b64, bbox_orig
 
         async with _sam_lock:
             try:
@@ -437,7 +507,7 @@ async def segment_image(request: SegmentRequest):
             hint = (request.user_hint or "").strip()
             cache_key = _caption_cache_key(request.image_path, label, request.query.strip(), hint)
             if cache_key not in _caption_cache and cache_key not in _caption_in_flight:
-                asyncio.create_task(
+                task = asyncio.create_task(
                     _background_caption(
                         image_path=request.image_path,
                         label=label,
@@ -447,6 +517,7 @@ async def segment_image(request: SegmentRequest):
                         user_hint=hint,
                     )
                 )
+                task.add_done_callback(_log_task_exception)
 
         # Return cached caption if instantly available (from a previous round)
         cache_key_ret = _caption_cache_key(
@@ -456,6 +527,7 @@ async def segment_image(request: SegmentRequest):
             (request.user_hint or "").strip(),
         )
         seg_resp.cached_caption = _caption_cache.get(cache_key_ret) or None
+        seg_resp.captioning_available = ollama_available
         return seg_resp
 
     except HTTPException:
@@ -463,8 +535,7 @@ async def segment_image(request: SegmentRequest):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Image not found: {request.image_path}")
     except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error("Segmentation", e)
 
 
 @app.post("/caption", response_model=CaptionResponse)
@@ -472,20 +543,23 @@ async def caption_image(request: CaptionRequest):
     if not ollama_available:
         raise HTTPException(status_code=503, detail="Ollama Vision is not available")
     try:
-        import base64 as b64mod
-        img_bytes = b64mod.b64decode(request.image_b64)
-        img = PILImage.open(BytesIO(img_bytes)).convert("RGB")
-
         start = time.time()
-        caption = caption_crop(
-            image=img,
-            query=request.query,
-            label=request.label,
-            url=settings.ollama_url,
-            model=settings.ollama_model,
-            timeout=90.0,
-            user_hint=request.user_hint,
-        )
+
+        def _run_caption():
+            import base64 as b64mod
+            img_bytes = b64mod.b64decode(request.image_b64)
+            img = PILImage.open(BytesIO(img_bytes)).convert("RGB")
+            return caption_crop(
+                image=img,
+                query=request.query,
+                label=request.label,
+                url=settings.ollama_url,
+                model=settings.ollama_model,
+                timeout=90.0,
+                user_hint=request.user_hint,
+            )
+
+        caption = await asyncio.to_thread(_run_caption)
         elapsed_ms = int((time.time() - start) * 1000)
 
         return CaptionResponse(
@@ -496,7 +570,7 @@ async def caption_image(request: CaptionRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_error("Caption", e)
 
 
 @app.get("/sam_status")
@@ -548,6 +622,8 @@ async def caption_lookup(
     background caption started by /segment — closes the UX loop so the user
     sees what Ollama described without having to click again.
     """
+    if retrieval_service is not None:
+        _assert_corpus_path(image_path, _allowed_corpus_paths())
     key = _caption_cache_key(image_path, label, query.strip(), user_hint.strip())
     caption = _caption_cache.get(key)
     in_flight = key in _caption_in_flight
@@ -646,7 +722,7 @@ async def metrics():
             "percent": cpu_pct,
             "count": psutil.cpu_count(logical=True),
             "count_physical": psutil.cpu_count(logical=False),
-            "freq_mhz": round(cpu_freq.current, 0) if cpu_freq else 0,
+            "freq_mhz": round(cpu_freq.current, 0) if cpu_freq and cpu_freq.current is not None else 0,
         },
         "memory": {
             "total_mb": round(mem.total / 1024 / 1024, 1),
@@ -680,6 +756,6 @@ if __name__ == "__main__":
     import argparse
     import uvicorn
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, default=int(os.environ.get("SERVER_PORT", "8001")))
     args = parser.parse_args()
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="error")

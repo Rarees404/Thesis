@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -32,7 +32,7 @@ class RetrievalService:
     ):
         self.config = config
         self.faiss_index = faiss_index
-        self.accumulated_query_embeddings = {"query_embedding": None}
+        self._session_query_embeddings: Dict[str, Optional[torch.Tensor]] = {}
         self.retrieval_round = 1
         self.experiment_id = 0
         self.device = device
@@ -102,14 +102,14 @@ class RetrievalService:
             arr = arr[np.newaxis, :]
         return arr
 
-    def search_images(self, query: str, top_k: int = 5):
+    def search_images(self, query: str, top_k: int = 5, session_id: str = "default"):
         self.experiment_id += 1
 
         processed_query = self.wrapper.process_inputs(text=query)
         with torch.no_grad():
             query_embedding = self.wrapper.get_text_embeddings(processed_query)
 
-        self.accumulated_query_embeddings["query_embedding"] = query_embedding
+        self._session_query_embeddings[session_id] = query_embedding
 
         scores, img_ids = self.index.search(self._to_faiss(query_embedding), top_k)
         scores = scores.squeeze().tolist()
@@ -170,6 +170,7 @@ class RetrievalServiceVisual(RetrievalService):
         bboxes: Optional[List[Optional[tuple]]] = None,
         caption_cache: Optional[Dict[str, str]] = None,
         cache_image_paths: Optional[List[str]] = None,
+        cache_key_builder: Optional[Callable[[str, str, str, str], str]] = None,
     ) -> List[str]:
         """
         Auto-caption SAM crops via Ollama.
@@ -188,9 +189,8 @@ class RetrievalServiceVisual(RetrievalService):
 
         for i, seg in enumerate(segments):
             img_path = (cache_image_paths or [])[i] if cache_image_paths else None
-            if caption_cache is not None and img_path:
-                from src.retrieval_server_visual import _caption_cache_key
-                ck = _caption_cache_key(img_path, label, query, hint)
+            if caption_cache is not None and img_path and cache_key_builder is not None:
+                ck = cache_key_builder(img_path, label, query, hint)
                 if ck in caption_cache and caption_cache[ck]:
                     captions_from_cache.append(caption_cache[ck])
                     continue
@@ -246,6 +246,8 @@ class RetrievalServiceVisual(RetrievalService):
         ollama_available: bool = False,
         vg_region_index=None,
         caption_cache: Optional[Dict[str, str]] = None,
+        cache_key_builder: Optional[Callable[[str, str, str, str], str]] = None,
+        session_id: str = "default",
     ):
         # ------------------------------------------------------------------
         # Step 1: Extract SAM segments (pixel crops from masks)
@@ -380,6 +382,7 @@ class RetrievalServiceVisual(RetrievalService):
                 bboxes=rel_bboxes or None,
                 caption_cache=caption_cache,
                 cache_image_paths=rel_img_paths or None,
+                cache_key_builder=cache_key_builder,
             )
 
         if vg_neg_phrases and not neg_hint:
@@ -396,6 +399,7 @@ class RetrievalServiceVisual(RetrievalService):
                 bboxes=irr_bboxes or None,
                 caption_cache=caption_cache,
                 cache_image_paths=irr_img_paths or None,
+                cache_key_builder=cache_key_builder,
             )
 
         # Visual grounding via Ollama when user typed a hint but there are no SAM
@@ -469,24 +473,25 @@ class RetrievalServiceVisual(RetrievalService):
             processed_query = self.wrapper.process_inputs(text=query)
             query_embedding = self.wrapper.get_text_embeddings(processed_query)
 
-            accumulated = self.accumulated_query_embeddings["query_embedding"]
+            accumulated = self._session_query_embeddings.get(session_id)
             if accumulated is None:
                 logger.warning("[Rocchio] No accumulated query — bootstrapping from fresh text embedding")
                 accumulated = query_embedding
 
             rocchio_query = (accumulated + query_embedding) / 2 if fuse_initial_query else accumulated
 
-            self.accumulated_query_embeddings["query_embedding"] = self.rocchio_update(
+            updated_query_embedding = self.rocchio_update(
                 query_embeddings=rocchio_query,
                 positive_embeddings=positive_embeddings,
                 negative_embeddings=negative_embeddings,
             )
+            self._session_query_embeddings[session_id] = updated_query_embedding
 
         # ------------------------------------------------------------------
         # Step 5: Search
         # ------------------------------------------------------------------
         scores, img_ids = self.index.search(
-            self._to_faiss(self.accumulated_query_embeddings["query_embedding"]),
+            self._to_faiss(updated_query_embedding),
             top_k,
         )
         scores = scores.squeeze().tolist()

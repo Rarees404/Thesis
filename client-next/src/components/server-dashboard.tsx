@@ -186,7 +186,10 @@ function ChartTooltipContent({ active, payload, label }: { active?: boolean; pay
 
 export function ServerDashboard() {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    const id = window.setTimeout(() => setMounted(true), 0);
+    return () => window.clearTimeout(id);
+  }, []);
 
   const metrics = useMetricsStore((s) => s.metrics);
   const history = useMetricsStore((s) => s.history);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
   const [loading,     setLoading]     = useState(false);
   const [segmentError, setSegmentError] = useState<string | null>(null);
 
-  const points = samAnnotation?.points ?? [];
+  const points = useMemo(() => samAnnotation?.points ?? [], [samAnnotation?.points]);
 
   const getImageDisplayRect = useCallback(
     (canvasW: number, canvasH: number) => {
@@ -79,22 +79,22 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
 
         // Outer glow ring
         ctx.beginPath();
-        ctx.arc(dx, dy, 11, 0, Math.PI * 2);
+        ctx.arc(dx, dy, 7, 0, Math.PI * 2);
         ctx.fillStyle = color + "22";
         ctx.fill();
 
         // Filled circle
         ctx.beginPath();
-        ctx.arc(dx, dy, 8, 0, Math.PI * 2);
+        ctx.arc(dx, dy, 5, 0, Math.PI * 2);
         ctx.fillStyle = color + "99";
         ctx.fill();
         ctx.strokeStyle = color;
-        ctx.lineWidth = 2.5;
+        ctx.lineWidth = 1.5;
         ctx.stroke();
 
         // White center dot
         ctx.beginPath();
-        ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+        ctx.arc(dx, dy, 1.5, 0, Math.PI * 2);
         ctx.fillStyle = "#fff";
         ctx.fill();
       }
@@ -203,9 +203,10 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const gen = ++segmentGenRef.current;
 
     const newPoint: ClickPoint = { x: coords.x, y: coords.y, label: activeLabel };
-    const updatedPoints = [...points, newPoint];
+    const switchedLabel = points.length > 0 && points.some((p) => p.label !== activeLabel);
+    const updatedPoints = switchedLabel ? [newPoint] : [...points, newPoint];
 
-    setSamAnnotation(index, { ...(samAnnotation ?? {}), points: updatedPoints });
+    setSamAnnotation(index, switchedLabel ? { points: updatedPoints } : { ...(samAnnotation ?? {}), points: updatedPoints });
     setSegmentError(null);
     setLoading(true);
 
@@ -214,9 +215,13 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
     const label = activeLabel === 1 ? "Relevant" : "Irrelevant";
 
     try {
+      // SAM needs label=1 (foreground) to segment accurately regardless of
+      // whether the user is marking the region relevant or irrelevant.
+      // Stored points keep their real labels for color/relevance tracking.
+      const samPoints = updatedPoints.map((p) => ({ ...p, label: 1 as const }));
       const result = await segmentImage(
         image.path,
-        updatedPoints,
+        samPoints,
         naturalSize.w,
         naturalSize.h,
         controller.signal,
@@ -239,7 +244,7 @@ export function ImageCard({ image, index, showAnnotations = true }: ImageCardPro
       // If the segment endpoint didn't return a ready caption, the server kicked
       // off background Ollama captioning — poll /caption_lookup so the UI can
       // display the caption the moment it's ready (typically 3–40s on MPS).
-      if (!result.cached_caption && query && query.trim()) {
+      if (!result.cached_caption && result.captioning_available && query && query.trim()) {
         if (captionPollRef.current) clearInterval(captionPollRef.current);
         const startedAt = Date.now();
         const pollGen = gen;

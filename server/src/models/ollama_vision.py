@@ -119,12 +119,13 @@ def _draw_highlight_box(
 
 def check_ollama(url: str, model: str) -> bool:
     """Return True if Ollama is reachable and `model` is pulled."""
+    target_names = {model, f"{model}:latest"} if ":" not in model else {model}
     try:
         resp = requests.get(f"{url}/api/tags", timeout=3)
         if resp.status_code != 200:
             return False
         models = [m.get("name", "") for m in resp.json().get("models", [])]
-        return any(model in m for m in models)
+        return any(m in target_names for m in models)
     except Exception:
         return False
 

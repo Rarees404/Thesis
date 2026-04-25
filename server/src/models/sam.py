@@ -8,9 +8,25 @@ import os
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple
 
+import gc
+
 import numpy as np
 import torch
 from PIL import Image
+
+
+def _free_gpu_cache(device: str) -> None:
+    gc.collect()
+    if device == "mps" and hasattr(torch, "mps"):
+        try:
+            torch.mps.empty_cache()
+        except Exception:
+            pass
+    elif device.startswith("cuda") and torch.cuda.is_available():
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 def _compute_prompt_box(
@@ -138,9 +154,26 @@ class SAM3Segmenter:
         )
         if already_set:
             return
+
+        # Explicitly free the previous image's GPU embeddings before encoding
+        # the next one — prevents both old+new features from living in memory
+        # simultaneously, which is what causes the spike on the second image.
+        if self._interactive is not None and self._interactive_set:
+            try:
+                if hasattr(self._interactive, "reset_predictor"):
+                    self._interactive.reset_predictor()
+                elif hasattr(self._interactive, "_is_image_set"):
+                    self._interactive._is_image_set = False
+            except Exception:
+                pass
+            _free_gpu_cache(self.device)
+
         if self._interactive is not None:
             with torch.no_grad():
                 self._interactive.set_image(np.array(image.convert("RGB")))
+            # Release the input tensor and all backbone intermediate tensors
+            # (attention maps etc.) that are no longer referenced after encoding.
+            _free_gpu_cache(self.device)
             self._interactive_set = True
         self._current_path = path
         self._current_image_size = (image.height, image.width)
@@ -179,6 +212,14 @@ class SAM3Segmenter:
                 return_logits=True,
             )
 
+        # Normalise to numpy so we never hold GPU tensors outside this call.
+        if isinstance(masks, torch.Tensor):
+            masks = masks.cpu().numpy()
+        if isinstance(scores, torch.Tensor):
+            scores = scores.cpu().numpy()
+        if isinstance(logits, torch.Tensor):
+            logits = logits.cpu().numpy()
+
         if use_multimask and masks.shape[0] > 1:
             if np.all(labels == 1):
                 best = int(np.argmax(scores))
@@ -194,6 +235,7 @@ class SAM3Segmenter:
             if cache_key not in self._logit_cache and len(self._logit_cache) >= self._LOGIT_CACHE_MAX:
                 oldest = next(iter(self._logit_cache))
                 del self._logit_cache[oldest]
+            # Store as CPU numpy — never keep GPU tensors in the cache dict.
             self._logit_cache[cache_key] = logits[best: best + 1]
         return {"mask": masks[best] > 0, "score": float(scores[best])}
 

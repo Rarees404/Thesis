@@ -17,6 +17,13 @@ import { CaptionPanel } from "@/components/caption-panel";
 import { ServerDashboard } from "@/components/server-dashboard";
 import { ErrorBanner } from "@/components/error-banner";
 
+function createSessionId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function Home() {
   const [activeTab, setActiveTab] = useState("search");
   const [backendReady, setBackendReady] = useState<boolean | null>(null);
@@ -55,14 +62,16 @@ export default function Home() {
     setError(null);
 
     try {
-      const data = await searchImages(query, topK);
+      const sessionId = createSessionId();
+      const data = await searchImages(query, topK, sessionId);
       if (data.success) {
         setSearchResults(
           data.images,
           data.image_paths,
           data.scores,
           data.preview_width ?? 224,
-          data.preview_height ?? 224
+          data.preview_height ?? 224,
+          data.session_id
         );
       } else {
         setError(data.message || "Search failed");
@@ -77,6 +86,7 @@ export default function Home() {
   const handleApplyFeedback = useCallback(async () => {
     const {
       query,
+      sessionId,
       topK,
       images,
       imagePaths,
@@ -122,6 +132,7 @@ export default function Home() {
         annotator_json_boxes_list: boxesList,
         ...(hasSam ? { sam_annotations: samList } : {}),
         fuse_initial_query: fuseInitialQuery,
+        ...(sessionId ? { session_id: sessionId } : {}),
       });
 
       if (data.success) {
@@ -130,7 +141,8 @@ export default function Home() {
           data.image_paths,
           data.scores,
           data.preview_width ?? 224,
-          data.preview_height ?? 224
+          data.preview_height ?? 224,
+          data.session_id
         );
       } else {
         setError(data.message || "Feedback failed");
