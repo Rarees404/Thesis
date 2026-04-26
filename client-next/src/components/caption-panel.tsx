@@ -1,16 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { MessageSquareText, Loader2, Zap, Clock, AlertCircle } from "lucide-react";
+import { MessageSquareText, Loader2 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { captionImage, ollamaStatus } from "@/lib/api";
 import type { CaptionResult } from "@/lib/types";
@@ -37,17 +29,17 @@ export function CaptionPanel() {
       const status = await ollamaStatus();
       if (!status.available) {
         setError(
-          "Ollama is not running. Start it with: ollama serve, then pull the model: ollama pull llama3.2-vision"
+          "Ollama not running. Start it: `ollama serve` then `ollama pull llama3.2-vision`",
         );
         setGenerating(false);
         return;
       }
 
       const results = new Map<number, CaptionResult>();
-
-      const targets = annotatedIndices.length > 0
-        ? annotatedIndices
-        : images.map((_, i) => i);
+      const targets =
+        annotatedIndices.length > 0
+          ? annotatedIndices
+          : images.map((_, i) => i);
 
       for (const i of targets) {
         const ann = samAnnotations.get(i);
@@ -65,7 +57,7 @@ export function CaptionPanel() {
           setCaptions(new Map(results));
         } catch {
           results.set(i, {
-            caption: "Caption failed — check Ollama connection",
+            caption: "Caption failed — check Ollama",
             model: "error",
             latency_ms: 0,
           });
@@ -80,103 +72,100 @@ export function CaptionPanel() {
   }
 
   return (
-    <Card className="border-amber-500/20">
-      <CardHeader className="pb-4">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <MessageSquareText className="h-4 w-4 text-amber-500" />
-          Ollama Vision Captions
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p className="text-sm text-white/40">
-          Generates descriptions for each image region using Ollama&apos;s Llama
-          3.2 Vision. Captions help the retrieval system understand what you
-          marked as relevant or irrelevant.
-        </p>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant="secondary" className="gap-1 text-xs">
-            <Zap className="h-3 w-3" />
-            llama3.2-vision
-          </Badge>
+    <section className="rounded-md border border-border bg-card">
+      {/* Header */}
+      <header className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium tracking-tight text-foreground">
+            Captions
+          </h3>
+          <span className="font-mono text-[11px] text-muted-foreground">
+            llama3.2-vision · synchronous
+          </span>
+        </div>
+        <div className="flex items-center gap-3 font-mono text-[11px] tabular-nums text-muted-foreground">
           {annotatedIndices.length > 0 && (
-            <Badge variant="outline" className="text-xs">
-              {annotatedIndices.length} segmented region{annotatedIndices.length !== 1 && "s"}
-            </Badge>
+            <span>
+              <span className="text-foreground">{annotatedIndices.length}</span>{" "}
+              regions
+            </span>
           )}
-          {query && (
-            <Badge variant="outline" className="text-xs text-white/40">
-              Query: &ldquo;{query}&rdquo;
-            </Badge>
+          {captions.size > 0 && (
+            <span>
+              <span className="text-foreground">{captions.size}</span> captioned
+            </span>
           )}
         </div>
+      </header>
+
+      {/* Body */}
+      <div className="space-y-4 px-5 py-4">
+        <p className="text-[13px] leading-relaxed text-muted-foreground">
+          Generate explicit Llama&nbsp;3.2-Vision captions for each region. The
+          background pipeline already does this when you click — this panel is
+          for manual re-runs and inspection.
+        </p>
 
         {error && (
-          <div className="flex items-start gap-2 rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-300">
-            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <p className="rounded-md border border-destructive/30 bg-destructive/[0.06] px-3 py-2 font-mono text-[11.5px] text-destructive">
             {error}
-          </div>
+          </p>
         )}
 
         <Button
           onClick={checkAndGenerate}
           disabled={generating}
-          variant="secondary"
-          className="gap-2"
+          variant="outline"
+          size="sm"
+          className="h-8"
         >
           {generating ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
-            <MessageSquareText className="h-4 w-4" />
+            <MessageSquareText className="h-3.5 w-3.5" />
           )}
-          {generating ? "Generating captions..." : "Generate Captions"}
+          {generating ? "Generating" : "Generate captions"}
         </Button>
 
         {captions.size > 0 && (
-          <>
-            <Separator />
-            <div className="space-y-3">
-              {images.map((img, i) => {
-                const cap = captions.get(i);
-                if (!cap) return null;
-                const ann = samAnnotations.get(i);
-                const thumbSrc = ann?.region_b64
-                  ? `data:image/png;base64,${ann.region_b64}`
-                  : `data:image/png;base64,${img.base64}`;
-                return (
-                  <div
-                    key={i}
-                    className="flex gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={thumbSrc}
-                      alt={`Region ${i + 1}`}
-                      className="h-16 w-16 rounded object-cover flex-shrink-0"
-                    />
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <p className="text-sm font-medium leading-snug">
-                        &ldquo;{cap.caption}&rdquo;
-                      </p>
-                      <div className="flex items-center gap-2 text-xs text-white/30">
-                        <Badge variant="secondary" className="text-[10px]">
-                          {cap.model}
-                        </Badge>
-                        {cap.latency_ms > 0 && (
-                          <span className="flex items-center gap-0.5">
-                            <Clock className="h-3 w-3" />
-                            {cap.latency_ms}ms
-                          </span>
-                        )}
-                      </div>
+          <ul className="divide-y divide-border border-t border-border">
+            {images.map((img, i) => {
+              const cap = captions.get(i);
+              if (!cap) return null;
+              const ann = samAnnotations.get(i);
+              const thumbSrc = ann?.region_b64
+                ? `data:image/png;base64,${ann.region_b64}`
+                : `data:image/png;base64,${img.base64}`;
+              return (
+                <li key={i} className="flex items-start gap-3 py-3">
+                  <span className="mt-0.5 font-mono text-[10.5px] tabular-nums text-muted-foreground">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={thumbSrc}
+                    alt={`Region ${i + 1}`}
+                    className="h-12 w-12 shrink-0 rounded-sm border border-border object-cover"
+                  />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="text-[13px] leading-snug text-foreground/85">
+                      {cap.caption}
+                    </p>
+                    <div className="flex items-center gap-3 font-mono text-[10.5px] text-muted-foreground">
+                      <span>{cap.model}</span>
+                      {cap.latency_ms > 0 && (
+                        <span className="tabular-nums">
+                          {cap.latency_ms} ms
+                        </span>
+                      )}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </section>
   );
 }

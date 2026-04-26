@@ -8,7 +8,6 @@ import {
   useMetricsStore,
 } from "@/lib/metrics-store";
 
-import { NeuralBackground } from "@/components/neural-background";
 import { Header } from "@/components/header";
 import { SearchBar } from "@/components/search-bar";
 import { ImageGallery } from "@/components/image-gallery";
@@ -114,9 +113,7 @@ export default function Home() {
         return {
           mask_rle: annot.mask_rle,
           label: hasRelevant ? ("Relevant" as const) : ("Irrelevant" as const),
-          // Include image path so server can do VG region lookup by image
           image_path: img.path,
-          // Pre-computed IoU-matched VG phrases from /segment — reuse to skip re-querying
           vg_phrases: annot.vg_phrases ?? [],
         };
       });
@@ -154,39 +151,45 @@ export default function Home() {
     }
   }, []);
 
+  const empty = store.images.length === 0 && !store.isSearching;
+
   return (
-    <div className="min-h-screen bg-black">
-      <NeuralBackground />
+    <div className="min-h-screen bg-background text-foreground">
       <Header activeTab={activeTab} onTabChange={setActiveTab} />
 
-      <main className="relative z-10 mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <main className="mx-auto max-w-6xl px-6 py-10 lg:px-8 lg:py-14">
         {activeTab === "search" && (
-          <div className="space-y-6">
-            {store.images.length === 0 && !store.isSearching && (
-              <div className="flex flex-col items-center gap-4 pb-6 pt-16 text-center">
-                <h2 className="text-4xl font-bold tracking-tight bg-gradient-to-r from-indigo-400 via-violet-400 to-purple-400 bg-clip-text text-transparent">
-                  Visual Relevance Feedback
-                </h2>
-                <p className="max-w-2xl text-white/40 text-lg leading-relaxed">
-                  Search for images using natural language. Then click on objects
-                  in the results to tell the system what you want more or less of.
-                  The AI refines your search in real time.
+          <div className="space-y-8">
+            {empty && (
+              <section className="space-y-6 pb-2">
+                <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+                  Interactive Image Retrieval
                 </p>
-                <div className="flex flex-wrap gap-3 justify-center mt-2">
-                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
-                    SAM 3 Segmentation
-                  </span>
-                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
-                    Llama 3.2 Vision
-                  </span>
-                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
-                    SigLIP Embeddings
-                  </span>
-                  <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/30 ring-1 ring-white/10">
-                    Rocchio Feedback
-                  </span>
-                </div>
-              </div>
+                <h1 className="max-w-3xl text-4xl font-medium tracking-tight text-foreground leading-[1.1]">
+                  Search by sentence. Refine by pointing.
+                </h1>
+                <p className="max-w-2xl text-[15px] leading-relaxed text-muted-foreground">
+                  Type a natural-language query, then click on the regions of the
+                  retrieved images you want more — or less — of. SAM&nbsp;3 segments,
+                  Llama&nbsp;3.2-Vision describes, and SigLIP&nbsp;+&nbsp;Rocchio
+                  refines the search vector each round.
+                </p>
+                <dl className="grid grid-cols-2 gap-x-8 gap-y-3 pt-2 text-xs sm:grid-cols-4 max-w-3xl">
+                  {[
+                    { k: "Embedding", v: "SigLIP large/256" },
+                    { k: "Segmentation", v: "SAM 3" },
+                    { k: "VLM", v: "Llama 3.2-Vision" },
+                    { k: "Index", v: "FAISS · 108k" },
+                  ].map(({ k, v }) => (
+                    <div key={k} className="border-l border-border pl-3">
+                      <dt className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {k}
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">{v}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </section>
             )}
 
             <SearchBar onSearch={handleSearch} />
@@ -194,14 +197,14 @@ export default function Home() {
             <ErrorBanner />
 
             {backendReady === false && (
-              <div className="flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-sm text-amber-400">
-                <svg className="h-4 w-4 animate-spin shrink-0" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-                </svg>
+              <div className="flex items-center gap-3 rounded-md border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                <span className="relative flex h-2 w-2 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400/60 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-400" />
+                </span>
                 <span>
-                  Backend is loading models (SigLIP + SAM 3) — this can take a few minutes on first run.
-                  Search will be enabled once ready.
+                  Backend is loading models (SigLIP + SAM 3). Search will
+                  enable when ready — typically 2–5 minutes on first run.
                 </span>
               </div>
             )}
@@ -216,6 +219,13 @@ export default function Home() {
 
         {activeTab === "dashboard" && <ServerDashboard />}
       </main>
+
+      <footer className="border-t border-border mt-16">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 text-[11px] text-muted-foreground lg:px-8">
+          <span className="font-mono">VisualReF · v2 · Maastricht University</span>
+          <span className="font-mono">SAM 3 · SigLIP · Llama 3.2-Vision</span>
+        </div>
+      </footer>
     </div>
   );
 }

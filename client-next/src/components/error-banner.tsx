@@ -1,8 +1,7 @@
 "use client";
 
 import { useAppStore } from "@/lib/store";
-import { XCircle, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { X } from "lucide-react";
 
 export function ErrorBanner() {
   const error = useAppStore((s) => s.error);
@@ -11,19 +10,19 @@ export function ErrorBanner() {
   if (!error) return null;
 
   return (
-    <div className="rounded-xl border border-red-500/20 bg-red-500/[0.08] p-4 backdrop-blur-xl">
-      <div className="flex items-start gap-3">
-        <XCircle className="h-5 w-5 text-red-400 mt-0.5 flex-shrink-0" />
-        <div className="flex-1 text-sm text-red-300">{error}</div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setError(null)}
-          className="h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-red-500/10"
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+    <div className="flex items-start gap-3 rounded-md border border-destructive/30 bg-destructive/[0.06] px-4 py-3">
+      <span
+        aria-hidden
+        className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+      />
+      <p className="flex-1 text-sm leading-snug text-foreground">{error}</p>
+      <button
+        onClick={() => setError(null)}
+        className="-mr-1 -mt-1 rounded p-1 text-muted-foreground transition-colors duration-100 hover:bg-foreground/5 hover:text-foreground"
+        aria-label="Dismiss"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }

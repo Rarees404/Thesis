@@ -2,7 +2,6 @@
 
 import { useAppStore } from "@/lib/store";
 import { ImageCard } from "./image-card";
-import { Skeleton } from "@/components/ui/skeleton";
 
 export function ImageGallery() {
   const images = useAppStore((s) => s.images);
@@ -14,43 +13,61 @@ export function ImageGallery() {
 
   if (loading) {
     return (
-      <div className="space-y-4">
-        <h2 className="text-sm font-medium text-white/40">
-          {isSearching ? "Searching..." : "Applying feedback..."}
-        </h2>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <section className="space-y-4">
+        <SectionHeading
+          label={isSearching ? "Searching" : "Refining"}
+          count={null}
+        />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="space-y-2">
-              <Skeleton className="aspect-square w-full rounded-xl bg-white/[0.04]" />
-              <Skeleton className="h-4 w-3/4 bg-white/[0.04]" />
-            </div>
+            <div
+              key={i}
+              className="aspect-square w-full animate-pulse rounded-md border border-border bg-card"
+            />
           ))}
         </div>
-      </div>
+      </section>
     );
   }
 
   if (images.length === 0) return null;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium text-white/40">
-          Results
-          <span className="ml-2 text-white font-semibold tabular-nums">{images.length}</span>
-          {round > 1 && (
-            <span className="ml-2 text-amber-500/90 font-mono text-xs">
-              phase {round - 1}
-            </span>
-          )}
-        </h2>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <section className="space-y-4">
+      <SectionHeading label="Results" count={images.length} round={round} />
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {images.map((img, i) => (
           <ImageCard key={`${img.path}-${i}`} image={img} index={i} />
         ))}
       </div>
+    </section>
+  );
+}
+
+function SectionHeading({
+  label,
+  count,
+  round,
+}: {
+  label: string;
+  count: number | null;
+  round?: number;
+}) {
+  return (
+    <div className="flex items-baseline justify-between border-b border-border pb-2">
+      <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+        {label}
+        {count !== null && (
+          <span className="ml-2 font-sans text-[12px] tracking-tight text-foreground tabular-nums">
+            {count}
+          </span>
+        )}
+      </h2>
+      {round !== undefined && round > 1 && (
+        <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+          round {round}
+        </span>
+      )}
     </div>
   );
 }

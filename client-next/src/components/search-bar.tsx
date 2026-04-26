@@ -1,16 +1,10 @@
 "use client";
 
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, CornerDownLeft } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { VanishInput } from "@/components/ui/vanish-input";
+import { Button } from "@/components/ui/button";
 
-const SEARCH_PLACEHOLDERS = [
-  "Type what you're looking for — e.g. dog on a beach...",
-  "e.g. person riding a bicycle in a city",
-  "e.g. red car on a mountain road",
-  "e.g. group of people at a dinner table",
-  "e.g. aerial view of a coastline at dawn",
-];
+const PLACEHOLDER = "dog playing fetch on a beach at sunset";
 
 interface SearchBarProps {
   onSearch: () => void;
@@ -22,27 +16,44 @@ export function SearchBar({ onSearch }: SearchBarProps) {
   const isSearching = useAppStore((s) => s.isSearching);
 
   return (
-    <div className="flex gap-3 items-center">
-      {/* vanish input takes up full width */}
-      <div className="flex-1">
-        <VanishInput
-          placeholders={SEARCH_PLACEHOLDERS}
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (query.trim() && !isSearching) onSearch();
+      }}
+      className="flex items-center gap-2"
+    >
+      <label className="relative flex-1">
+        <span className="sr-only">Search query</span>
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <input
+          type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onSubmit={(e) => { e.preventDefault(); if (query.trim() && !isSearching) onSearch(); }}
-          onKeyDown={(e) => { if (e.key === "Enter" && query.trim() && !isSearching) onSearch(); }}
+          placeholder={PLACEHOLDER}
           disabled={isSearching}
-          accentColor="indigo"
-          className="h-14 text-base"
-          submitIcon={
-            isSearching ? (
-              <Loader2 className="h-4 w-4 text-white/60 animate-spin" />
-            ) : (
-              <Search className="h-4 w-4 text-white/60" />
-            )
-          }
+          className="h-11 w-full rounded-md border border-input bg-card pl-9 pr-20 text-[14px] tracking-tight text-foreground outline-none transition-colors duration-100 placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50"
         />
-      </div>
-    </div>
+        <kbd className="pointer-events-none absolute right-3 top-1/2 hidden h-5 -translate-y-1/2 items-center gap-1 rounded border border-border bg-background px-1.5 font-mono text-[10px] text-muted-foreground sm:inline-flex">
+          <CornerDownLeft className="h-3 w-3" />
+        </kbd>
+      </label>
+
+      <Button
+        type="submit"
+        disabled={!query.trim() || isSearching}
+        size="default"
+        className="h-11 px-4"
+      >
+        {isSearching ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>Searching</span>
+          </>
+        ) : (
+          <span>Search</span>
+        )}
+      </Button>
+    </form>
   );
 }
