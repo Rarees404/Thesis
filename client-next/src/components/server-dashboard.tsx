@@ -203,6 +203,8 @@ function ChartTooltipContent({
 
 export function ServerDashboard() {
   const [mounted, setMounted] = useState(false);
+  const [secondsAgo, setSecondsAgo] = useState(0);
+
   useEffect(() => {
     const id = window.setTimeout(() => setMounted(true), 0);
     return () => window.clearTimeout(id);
@@ -212,9 +214,18 @@ export function ServerDashboard() {
   const history = useMetricsStore((s) => s.history);
   const status = useMetricsStore((s) => s.status);
   const lastError = useMetricsStore((s) => s.lastError);
+  const lastPollTime = useMetricsStore((s) => s.lastPollTime);
   const polling = useMetricsStore((s) => s.polling);
   const setPolling = useMetricsStore((s) => s.setPolling);
   const poll = useMetricsStore((s) => s.poll);
+
+  // Count up seconds since last successful poll so the audience sees live activity
+  useEffect(() => {
+    setSecondsAgo(0);
+    if (!polling) return;
+    const id = setInterval(() => setSecondsAgo((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [lastPollTime, polling]);
 
   const cpuAvg = useMemo(() => {
     const live = history.filter((d) => d.cpu > 0);
@@ -259,6 +270,17 @@ export function ServerDashboard() {
           </div>
 
           <div className="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+            {lastPollTime && (
+              <span className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-2 py-1 tabular-nums">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {lastPollTime}
+                {secondsAgo > 0 && (
+                  <span className="text-muted-foreground/60">
+                    +{secondsAgo}s
+                  </span>
+                )}
+              </span>
+            )}
             {metrics && (
               <span className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-2 py-1 tabular-nums">
                 <Clock className="h-3 w-3" />
