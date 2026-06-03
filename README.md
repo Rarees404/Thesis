@@ -334,7 +334,7 @@ The three tasks (zebra, tower, "lid") are defined in
 errors with `503 "Study query set not built"`** — it holds the task definitions and
 ground-truth relevant sets. Analyze collected runs with
 `python -m src.eval.analyze_study` (from `server/`). Full details in
-[DOCUMENTATION.md §8](DOCUMENTATION.md#8-the-user-study-system).
+[DOCUMENTATION.md §14](DOCUMENTATION.md#14-the-user-study-system).
 
 ---
 
