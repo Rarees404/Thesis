@@ -1,12 +1,15 @@
 
 import asyncio
+import json
 import logging
 import os
-import time
 import platform
+import re
 import subprocess
+import time
 import uuid
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import gc
@@ -91,8 +94,27 @@ class ProcessApplyFeedbackRequest(BaseModel):
     irrelevant_captions: str
     annotator_json_boxes_list: List[Any]
     sam_annotations: Optional[List[Any]] = None
+    # Per-image full-image label: "Relevant" | "Irrelevant" | None.
+    # Used only when no SAM mask / box exists for that index.
+    image_labels: Optional[List[Optional[str]]] = None
     fuse_initial_query: bool = False
     session_id: Optional[str] = None
+
+
+class HardFilterPhrase(BaseModel):
+    phrase: str
+    count: int
+
+
+class HardFilterInfo(BaseModel):
+    """Per-round telemetry for the per-object hard filter (region index)."""
+    blacklist_size: int = 0
+    boostlist_size: int = 0
+    dropped: int = 0       # how many over-fetched candidates were dropped this round
+    boosted: int = 0       # how many returned images were on the boostlist
+    overfetch: int = 0     # how many FAISS candidates were over-fetched
+    top_negative_phrases: List[HardFilterPhrase] = []
+    top_positive_phrases: List[HardFilterPhrase] = []
 
 
 class ProcessApplyFeedbackResponse(BaseModel):
@@ -104,6 +126,7 @@ class ProcessApplyFeedbackResponse(BaseModel):
     preview_width: int
     preview_height: int
     session_id: str
+    hard_filter: Optional[HardFilterInfo] = None
 
 
 class SegmentPoint(BaseModel):
@@ -151,12 +174,41 @@ class CaptionResponse(BaseModel):
     latency_ms: int
 
 
+# ── User-study models ────────────────────────────────────────────────────────
+class StudyTaskOut(BaseModel):
+    task_id: str
+    query: str
+    story: str
+    target_b64: str
+    target_path: str
+
+
+class StudyTasksResponse(BaseModel):
+    tasks: List[StudyTaskOut]
+
+
+class StudyEventRequest(BaseModel):
+    participant_id: str = Field(min_length=1, max_length=128)
+    event_type: str
+    session_id: Optional[str] = None
+    task_id: Optional[str] = None
+    client_ts: Optional[float] = None  # client epoch ms
+    data: Dict[str, Any] = Field(default_factory=dict)
+
+
+class StudyFormRequest(BaseModel):
+    participant_id: str = Field(min_length=1, max_length=128)
+    answers: Dict[str, Any]
+    session_id: Optional[str] = None
+
+
 retrieval_service: Optional[RetrievalServiceVisual] = None
 sam_segmenter = None
 sam_model_type: str = "none"
 ollama_available: bool = False
 
 vg_index = None  # Optional[VGRegionIndex]
+region_index = None  # Optional[RegionIndex] — per-object SigLIP FAISS for hard filtering
 
 # Serialize all SAM calls — the model has shared mutable state that is NOT thread-safe.
 _sam_lock: asyncio.Lock = asyncio.Lock()
@@ -228,6 +280,12 @@ def _validate_feedback_paths(request: ProcessApplyFeedbackRequest):
         raise HTTPException(status_code=400, detail="Feedback boxes must align with image paths")
     if request.sam_annotations is not None and len(request.sam_annotations) != len(request.relevant_image_paths):
         raise HTTPException(status_code=400, detail="SAM annotations must align with image paths")
+    if request.image_labels is not None and len(request.image_labels) != len(request.relevant_image_paths):
+        raise HTTPException(status_code=400, detail="Image labels must align with image paths")
+    if request.image_labels:
+        for lbl in request.image_labels:
+            if lbl is not None and lbl not in ("Relevant", "Irrelevant"):
+                raise HTTPException(status_code=400, detail="image_labels values must be 'Relevant', 'Irrelevant', or null")
     allowed = _allowed_corpus_paths()
     for path in request.relevant_image_paths:
         _assert_corpus_path(path, allowed)
@@ -310,7 +368,7 @@ async def _background_caption(
 
 
 async def startup_event():
-    global retrieval_service, sam_segmenter, sam_model_type, vg_index
+    global retrieval_service, sam_segmenter, sam_model_type, vg_index, region_index
 
     if settings.config_path is None:
         raise RuntimeError("CONFIG_PATH is not set")
@@ -369,6 +427,24 @@ async def startup_event():
             print(f"[startup] VG region loading failed: {e}")
             vg_index = None
 
+    # Per-object SigLIP region index (built by src.precompute.build_region_index).
+    # Optional — server still works without it, just falls back to soft Rocchio re-ranking.
+    try:
+        from src.services.region_index import RegionIndex
+        index_path = config.get("INDEX_PATH") or config.get("APP_INDEX_PATH")
+        if index_path:
+            base = os.path.dirname(resolve_repo(index_path))
+            faiss_path = os.path.join(base, "region_index.faiss")
+            meta_path = os.path.join(base, "region_meta.jsonl")
+            region_index = RegionIndex.load(faiss_path, meta_path)
+            if region_index:
+                print(f"[startup] Region index loaded ({region_index.ntotal} regions, dim={region_index.dim})")
+            else:
+                print(f"[startup] Region index not found at {base} — hard filtering disabled")
+    except Exception as e:
+        print(f"[startup] Region index loading failed: {e}")
+        region_index = None
+
 
 @app.post("/search", response_model=SearchResponse)
 async def search_images(request: SearchRequest):
@@ -414,14 +490,16 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
                 irrelevant_captions=request.irrelevant_captions,
                 annotator_json_boxes_list=request.annotator_json_boxes_list,
                 sam_annotations=request.sam_annotations,
+                image_labels=request.image_labels,
                 fuse_initial_query=request.fuse_initial_query,
                 ollama_available=ollama_available,
                 vg_region_index=vg_index,
+                region_index=region_index,
                 caption_cache=_caption_cache,
                 cache_key_builder=_caption_cache_key,
                 session_id=session_id,
             )
-        images_b64, scores, image_paths = await asyncio.to_thread(_run)
+        images_b64, scores, image_paths, hf_info = await asyncio.to_thread(_run)
         pw, ph = _preview_side()
         return ProcessApplyFeedbackResponse(
             images=images_b64,
@@ -432,6 +510,7 @@ async def apply_feedback(request: ProcessApplyFeedbackRequest):
             preview_width=pw,
             preview_height=ph,
             session_id=session_id,
+            hard_filter=HardFilterInfo(**hf_info) if hf_info else None,
         )
     except Exception as e:
         raise _internal_error("Feedback", e)
@@ -588,6 +667,8 @@ async def health_check():
         "gpu_available": torch.cuda.is_available(),
         "ollama_available": ollama_available,
         "vg_index_loaded": vg_index is not None,
+        "region_index_loaded": region_index is not None,
+        "region_index_size": region_index.ntotal if region_index is not None else 0,
     }
 
 
@@ -693,6 +774,135 @@ def _gpu_metrics() -> dict:
             "utilization_pct": _mps_gpu_util_pct(),
         })
     return info
+
+
+# ── User study ───────────────────────────────────────────────────────────────
+# Tasks are drawn from the offline-eval query set so that the SAME ground truth
+# (relevant image sets) can be reused at analysis time to score precision-at-stop.
+_STUDY_QUERIES_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "eval", "data", "queries.json"
+)
+_study_tasks_cache: Optional[List[StudyTaskOut]] = None
+_corpus_id_to_path_cache: Optional[Dict[int, str]] = None
+
+_STUDY_STORIES = [
+    "A water-damaged photo album turned up in the archive. One caption is still "
+    "legible: “{q}”. Find the photograph it belongs to.",
+    "A retiring curator left a single clue about a misfiled picture: “{q}”. "
+    "Track it down before the collection is sealed.",
+    "An old hard drive holds thousands of unlabelled images. A sticky note reads "
+    "“{q}”. Recover the matching shot.",
+    "A journalist needs one image for tomorrow's front page and remembers only "
+    "this: “{q}”. Help them find it in time.",
+    "A museum visitor described a photo they loved years ago: “{q}”. "
+    "Reunite them with it.",
+]
+
+
+def _study_dir() -> Path:
+    base = settings.logs_path or (Path(__file__).resolve().parents[2] / "logs")
+    d = Path(base) / "study"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _safe_pid(pid: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "_", pid).strip("_")[:64]
+    return cleaned or "anon"
+
+
+def _corpus_id_to_path() -> Dict[int, str]:
+    global _corpus_id_to_path_cache
+    if _corpus_id_to_path_cache is None and retrieval_service is not None:
+        m: Dict[int, str] = {}
+        for p in retrieval_service.candidate_image_paths:
+            stem = os.path.splitext(os.path.basename(p))[0]
+            if stem.isdigit():
+                m[int(stem)] = p
+        _corpus_id_to_path_cache = m
+    return _corpus_id_to_path_cache or {}
+
+
+def _build_study_tasks(n: int) -> List[StudyTaskOut]:
+    """Deterministic task list (same for every participant) so results are
+    comparable. Prefers concrete category queries for findability; target is the
+    lowest-id relevant image that resolves to a corpus path."""
+    global _study_tasks_cache
+    if _study_tasks_cache is not None:
+        return _study_tasks_cache[:n]
+    if retrieval_service is None:
+        raise HTTPException(status_code=503, detail="Retrieval service not ready")
+    try:
+        with open(_STUDY_QUERIES_PATH) as f:
+            qdata = json.load(f)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="Study query set not built")
+
+    id_to_path = _corpus_id_to_path()
+    side, _ = _preview_side()
+    pool = list(qdata.get("category", [])) + list(qdata.get("compositional", []))
+    tasks: List[StudyTaskOut] = []
+    for q in pool:
+        rel_ids = sorted(int(k) for k in q.get("relevant", {}))
+        target_path = next((id_to_path[i] for i in rel_ids if i in id_to_path), None)
+        if target_path is None:
+            continue
+        try:
+            b64 = retrieval_service._b64_cache(target_path, side)
+        except Exception:
+            continue
+        story = _STUDY_STORIES[len(tasks) % len(_STUDY_STORIES)].format(q=q["text"])
+        tasks.append(StudyTaskOut(
+            task_id=q["qid"], query=q["text"], story=story,
+            target_b64=b64, target_path=target_path,
+        ))
+        if len(tasks) >= 50:  # cap the precomputed pool
+            break
+    _study_tasks_cache = tasks
+    return tasks[:n]
+
+
+@app.get("/study/tasks", response_model=StudyTasksResponse)
+async def study_tasks(n: int = 3):
+    n = max(1, min(n, 20))
+    return StudyTasksResponse(tasks=_build_study_tasks(n))
+
+
+@app.post("/study/log")
+async def study_log(req: StudyEventRequest):
+    record = {
+        "server_ts": time.time(),
+        "participant_id": req.participant_id,
+        "session_id": req.session_id,
+        "task_id": req.task_id,
+        "event_type": req.event_type,
+        "client_ts": req.client_ts,
+        "data": req.data,
+    }
+    path = _study_dir() / f"{_safe_pid(req.participant_id)}.jsonl"
+    try:
+        with open(path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        raise _internal_error("Study log", e)
+    return {"ok": True}
+
+
+@app.post("/study/form")
+async def study_form(req: StudyFormRequest):
+    record = {
+        "server_ts": time.time(),
+        "participant_id": req.participant_id,
+        "session_id": req.session_id,
+        "answers": req.answers,
+    }
+    path = _study_dir() / f"{_safe_pid(req.participant_id)}.form.json"
+    try:
+        with open(path, "w") as f:
+            json.dump(record, f, indent=2)
+    except Exception as e:
+        raise _internal_error("Study form", e)
+    return {"ok": True}
 
 
 @app.get("/metrics")

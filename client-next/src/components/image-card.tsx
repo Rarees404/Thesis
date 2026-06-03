@@ -4,6 +4,7 @@ import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { Trash2, ZoomIn, Loader2, MousePointer2 } from "lucide-react";
 import type { ClickPoint, RetrievedImage } from "@/lib/types";
 import { useAppStore } from "@/lib/store";
+import { useStudyStore } from "@/lib/study/store";
 import { segmentImage, lookupCachedCaption } from "@/lib/api";
 
 interface ImageCardProps {
@@ -26,9 +27,12 @@ export function ImageCard({
   const setSamAnnotation = useAppStore((s) => s.setSamAnnotation);
   const clearSamAnnotation = useAppStore((s) => s.clearSamAnnotation);
   const samAnnotation = useAppStore((s) => s.samAnnotations.get(index));
+  const setImageLabel = useAppStore((s) => s.setImageLabel);
+  const imageLabel = useAppStore((s) => s.imageLabels.get(index));
   const query = useAppStore((s) => s.query);
   const relevantCaptions = useAppStore((s) => s.relevantCaptions);
   const irrelevantCaptions = useAppStore((s) => s.irrelevantCaptions);
+  const studyActive = useStudyStore((s) => s.phase === "running");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -232,6 +236,9 @@ export function ImageCard({
         ? { points: updatedPoints }
         : { ...(samAnnotation ?? {}), points: updatedPoints },
     );
+    // First click on this image — clear any prior full-image label since the
+    // per-region selection now provides a finer-grained signal.
+    if (points.length === 0) setImageLabel(index, null);
     setSegmentError(null);
     setLoading(true);
 
@@ -261,6 +268,18 @@ export function ImageCard({
         vg_phrases: result.vg_phrases,
         cached_caption: result.cached_caption ?? null,
       });
+
+      if (studyActive) {
+        useStudyStore.getState().logEvent("segment_click", {
+          image_path: image.path,
+          result_index: index,
+          x: coords.x,
+          y: coords.y,
+          label: activeLabel === 1 ? "Relevant" : "Irrelevant",
+          mask_score: result.score,
+          vg_phrases: result.vg_phrases ?? [],
+        });
+      }
 
       if (
         !result.cached_caption &&
@@ -328,6 +347,7 @@ export function ImageCard({
     }
     segmentGenRef.current += 1;
     clearSamAnnotation(index);
+    setImageLabel(index, null);
     setSegmentError(null);
   }
 
@@ -340,9 +360,34 @@ export function ImageCard({
   const hasMask = Boolean(samAnnotation?.mask_rle);
   const hasCaption = Boolean(samAnnotation?.cached_caption);
   const isRelevant = points.some((p) => p.label === 1);
+  const noClicks = points.length === 0;
+  // When there are no clicks, the visible "active" state of the buttons mirrors
+  // the full-image label. With clicks, it tracks the SAM click-mode (activeLabel).
+  const relevantActive = noClicks
+    ? imageLabel === "Relevant"
+    : activeLabel === 1;
+  const irrelevantActive = noClicks
+    ? imageLabel === "Irrelevant"
+    : activeLabel === 0;
+
+  function handleLabelButton(target: 1 | 0) {
+    setActiveLabel(target);
+    if (!noClicks) return;
+    const desired = target === 1 ? "Relevant" : "Irrelevant";
+    setImageLabel(index, imageLabel === desired ? null : desired);
+  }
+
+  const borderClass =
+    noClicks && imageLabel === "Relevant"
+      ? "border-emerald-500/40"
+      : noClicks && imageLabel === "Irrelevant"
+        ? "border-rose-500/40"
+        : "border-border hover:border-foreground/20";
 
   return (
-    <article className="group flex flex-col overflow-hidden rounded-md border border-border bg-card transition-colors duration-100 hover:border-foreground/20">
+    <article
+      className={`group flex flex-col overflow-hidden rounded-md border bg-card transition-colors duration-100 ${borderClass}`}
+    >
       {/* ── Image canvas region ── */}
       <div className="relative">
         {/* Top-left: index + status */}
@@ -367,6 +412,16 @@ export function ImageCard({
               title={segmentError}
             >
               {segmentError}
+            </span>
+          )}
+          {noClicks && imageLabel === "Relevant" && (
+            <span className="rounded border border-emerald-500/40 bg-emerald-500/[0.08] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-emerald-400">
+              relevant
+            </span>
+          )}
+          {noClicks && imageLabel === "Irrelevant" && (
+            <span className="rounded border border-rose-500/40 bg-rose-500/[0.08] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-rose-400">
+              irrelevant
             </span>
           )}
         </div>
@@ -432,9 +487,9 @@ export function ImageCard({
           {/* Label toggle */}
           <div className="flex items-stretch gap-1.5">
             <button
-              onClick={() => setActiveLabel(1)}
+              onClick={() => handleLabelButton(1)}
               className={`flex-1 rounded border px-2 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-colors duration-100 ${
-                activeLabel === 1
+                relevantActive
                   ? "border-emerald-500/40 bg-emerald-500/[0.08] text-emerald-400"
                   : "border-border text-muted-foreground hover:text-foreground"
               }`}
@@ -442,9 +497,9 @@ export function ImageCard({
               relevant
             </button>
             <button
-              onClick={() => setActiveLabel(0)}
+              onClick={() => handleLabelButton(0)}
               className={`flex-1 rounded border px-2 py-1.5 font-mono text-[10.5px] uppercase tracking-wider transition-colors duration-100 ${
-                activeLabel === 0
+                irrelevantActive
                   ? "border-rose-500/40 bg-rose-500/[0.08] text-rose-400"
                   : "border-border text-muted-foreground hover:text-foreground"
               }`}
@@ -453,7 +508,7 @@ export function ImageCard({
             </button>
             <button
               onClick={handleClear}
-              disabled={points.length === 0}
+              disabled={noClicks && !imageLabel}
               className="rounded border border-border px-2 text-muted-foreground transition-colors duration-100 hover:text-foreground disabled:opacity-40"
               title="Clear selection"
               aria-label="Clear"

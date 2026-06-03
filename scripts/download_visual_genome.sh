@@ -98,6 +98,28 @@ else
   echo "  Done."
 fi
 
+# ── Part 5: Scene-graph annotations (objects / relationships / attributes) ──
+# These give clean, structured labels used as INDEPENDENT ground truth for the
+# offline retrieval evaluation (category + compositional queries). They are
+# distinct from region_descriptions.json, whose free-text phrases are consumed
+# by the model as a feedback signal — using them for ground truth would be
+# circular, hence we judge relevance from these structured files instead.
+SCENE_GRAPH_BASE="https://homes.cs.washington.edu/~ranjay/visualgenome/data/dataset"
+for name in objects relationships attributes; do
+  json="$VG_DIR/$name.json"
+  zip="$VG_DIR/$name.json.zip"
+  if [ -f "$json" ]; then
+    echo "[5/5] $name.json already present — skipping download."
+  else
+    echo "[5/5] Downloading $name.json ..."
+    download "$SCENE_GRAPH_BASE/$name.json.zip" "$zip"
+    echo "  Extracting..."
+    unzip -q -o "$zip" -d "$VG_DIR"
+    rm -f "$zip"
+    echo "  Done."
+  fi
+done
+
 TOTAL=$(find "$VG_DIR" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" \) | wc -l | tr -d ' ')
 echo ""
 echo "========================================"
@@ -108,7 +130,7 @@ echo "  Location: $VG_DIR"
 echo ""
 echo "  Next steps:"
 echo "    1. Build the FAISS index:"
-echo "       bash scripts/build_index.sh vg"
+echo "       bash scripts/build_index.sh"
 echo ""
 echo "    2. Switch server/.env to Visual Genome:"
 echo "       CONFIG_PATH=../configs/demo/vg_siglip.yaml"

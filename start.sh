@@ -147,7 +147,7 @@ if [ -z "$INDEX_ABS" ] || [ ! -f "$INDEX_ABS" ]; then
     fail "FAISS index not found${INDEX_ABS:+ at: $INDEX_ABS}"
     echo ""
     echo "       Build it first (Visual Genome):"
-    echo "         bash scripts/build_index.sh vg"
+    echo "         bash scripts/build_index.sh"
     echo "       Then ensure server/.env INDEX_PATH matches the output path."
     exit 1
 fi
@@ -155,7 +155,7 @@ fi
 PATHS_TXT="$(dirname "$INDEX_ABS")/image_paths.txt"
 if [ ! -f "$PATHS_TXT" ]; then
     fail "image_paths.txt missing next to index: $PATHS_TXT"
-    echo "       Re-run:  bash scripts/build_index.sh vg"
+    echo "       Re-run:  bash scripts/build_index.sh"
     exit 1
 fi
 ok "FAISS index ready ($(wc -l < "$PATHS_TXT" | tr -d ' ') paths)"
@@ -270,6 +270,17 @@ if [ "$VG_LOADED" = "True" ]; then
     ok "Visual Genome region index loaded"
 else
     info "VG region index not loaded (region_descriptions.json optional)"
+fi
+
+# Per-object region index (hard filtering)
+REGION_LOADED=$(echo "$HEALTH" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('region_index_loaded', False))" 2>/dev/null || echo "False")
+REGION_SIZE=$(echo "$HEALTH" | "$SERVER_DIR/venv/bin/python" -c \
+    "import sys,json; print(json.load(sys.stdin).get('region_index_size', 0))" 2>/dev/null || echo "0")
+if [ "$REGION_LOADED" = "True" ]; then
+    ok "Region FAISS index loaded  ($REGION_SIZE embeddings — hard filtering active)"
+else
+    info "Region FAISS index not found — run src.precompute.build_region_index to enable hard filtering"
 fi
 
 # GPU

@@ -293,11 +293,17 @@ def apply_mask(image: Image.Image, mask: np.ndarray, fill_value: int = 128) -> I
 
 def mask_to_rle(mask: np.ndarray) -> dict:
     """
-    Encode a binary mask as RLE in COCO convention:
+    Encode a binary mask as run-length encoding (RLE).
+
+    Uses the pycocotools "COCO RLE" *format* (a mask-encoding standard) — this is
+    NOT related to the COCO image dataset; the corpus here is Visual Genome.
+    Counts are alternating run lengths over the row-major flattened mask:
       counts[0]  = number of background pixels before the first foreground pixel (may be 0)
       counts[1]  = length of first foreground run
       counts[2]  = length of next background run
       ...
+    The leading 0 (when the mask starts on a foreground pixel) keeps the runs
+    strictly background-first, so the decoder can always start with val=0.
     """
     flat = mask.flatten().astype(np.uint8)
     n = len(flat)
@@ -317,7 +323,8 @@ def mask_to_rle(mask: np.ndarray) -> dict:
 
 
 def rle_to_mask(rle: dict) -> np.ndarray:
-    """Decode a COCO-convention RLE back to a binary mask."""
+    """Decode an RLE dict (pycocotools "COCO RLE" format — see mask_to_rle;
+    not the COCO dataset) back to a binary mask."""
     h, w = rle["size"]
     n = h * w
     flat = np.zeros(n, dtype=np.uint8)

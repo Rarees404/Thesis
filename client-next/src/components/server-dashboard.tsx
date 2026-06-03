@@ -27,7 +27,8 @@ import {
   ReferenceLine,
 } from "recharts";
 import { useMetricsStore } from "@/lib/metrics-store";
-import type { MetricsDataPoint } from "@/lib/types";
+import { healthCheck } from "@/lib/api";
+import type { MetricsDataPoint, HealthResponse } from "@/lib/types";
 
 const ACCENT = "#6f8cf2"; // primary blue
 const ACCENT_2 = "#8ad5c2"; // teal
@@ -204,6 +205,13 @@ function ChartTooltipContent({
 export function ServerDashboard() {
   const [mounted, setMounted] = useState(false);
   const [secondsAgo, setSecondsAgo] = useState(0);
+  const [healthInfo, setHealthInfo] = useState<HealthResponse | null>(null);
+
+  useEffect(() => {
+    healthCheck()
+      .then(setHealthInfo)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const id = window.setTimeout(() => setMounted(true), 0);
@@ -561,6 +569,20 @@ export function ServerDashboard() {
                 metrics.model.loaded
                   ? `${metrics.model.index_size.toLocaleString()} vectors`
                   : "not loaded"
+              }
+            />
+            <InfoRow
+              label="Region index"
+              value={
+                healthInfo?.region_index_loaded ? (
+                  <span className="text-emerald-400">
+                    {healthInfo.region_index_size.toLocaleString()} regions
+                  </span>
+                ) : healthInfo ? (
+                  <span className="text-muted-foreground/60">not loaded</span>
+                ) : (
+                  <span className="text-muted-foreground/40">—</span>
+                )
               }
             />
             <InfoRow

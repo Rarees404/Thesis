@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { ollamaStatus, samStatus } from "@/lib/api";
+import type { HardFilterInfo } from "@/lib/types";
 
 interface FeedbackPanelProps {
   onApply: () => void;
@@ -23,6 +24,8 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
   const fuseInitialQuery = useAppStore((s) => s.fuseInitialQuery);
   const setFuseInitialQuery = useAppStore((s) => s.setFuseInitialQuery);
   const samAnnotations = useAppStore((s) => s.samAnnotations);
+  const imageLabels = useAppStore((s) => s.imageLabels);
+  const hardFilter = useAppStore((s) => s.hardFilter);
 
   const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null);
   const [samLoaded, setSamLoaded] = useState<boolean | null>(null);
@@ -66,11 +69,19 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
   const samWithMask = Array.from(samAnnotations.values()).filter(
     (a) => a.mask_rle,
   ).length;
+  const fullImagePos = Array.from(imageLabels.entries()).filter(
+    ([i, l]) => l === "Relevant" && !samAnnotations.get(i)?.mask_rle,
+  ).length;
+  const fullImageNeg = Array.from(imageLabels.entries()).filter(
+    ([i, l]) => l === "Irrelevant" && !samAnnotations.get(i)?.mask_rle,
+  ).length;
+  const totalFullLabels = fullImagePos + fullImageNeg;
   const totalAi =
     aiSuggestions.relevant.length + aiSuggestions.irrelevant.length;
   const hasAnyFeedback =
     totalBoxes > 0 ||
     samWithMask > 0 ||
+    totalFullLabels > 0 ||
     relevantCaptions.trim() ||
     irrelevantCaptions.trim();
 
@@ -94,6 +105,15 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
 
       {/* Body */}
       <div className="space-y-5 px-5 py-4">
+        {/* Hard-filter telemetry from the previous round */}
+        {hardFilter &&
+          (hardFilter.dropped > 0 ||
+            hardFilter.boosted > 0 ||
+            hardFilter.blacklist_size > 0 ||
+            hardFilter.boostlist_size > 0) && (
+            <HardFilterBadge info={hardFilter} />
+          )}
+
         {/* AI caption suggestions, if any */}
         {totalAi > 0 && (
           <div className="space-y-2 border-l-2 border-amber-500/40 pl-3">
@@ -172,13 +192,16 @@ export function FeedbackPanel({ onApply }: FeedbackPanelProps) {
           {samWithMask > 0 && (
             <Stat label="regions" value={samWithMask} accent />
           )}
+          {totalFullLabels > 0 && (
+            <Stat label="images" value={totalFullLabels} accent />
+          )}
           {totalBoxes > 0 && <Stat label="boxes" value={totalBoxes} />}
           {totalAi > 0 && (
             <Stat label="captions" value={totalAi} amber />
           )}
-          {!samWithMask && !totalBoxes && !totalAi && (
+          {!samWithMask && !totalFullLabels && !totalBoxes && !totalAi && (
             <span className="text-muted-foreground/60">
-              Click an image region to begin
+              Click an image region or mark whole images
             </span>
           )}
         </div>
@@ -281,6 +304,67 @@ function CaptionRow({
           use
         </button>
       )}
+    </div>
+  );
+}
+
+function HardFilterBadge({ info }: { info: HardFilterInfo }) {
+  const negPhrases = info.top_negative_phrases.slice(0, 3);
+  const posPhrases = info.top_positive_phrases.slice(0, 3);
+  const renderPhrases = (phrases: { phrase: string; count: number }[]) =>
+    phrases.map((p, i) => (
+      <span key={p.phrase}>
+        <em className="not-italic text-foreground/85">{p.phrase}</em>
+        {i < phrases.length - 1 && (
+          <span className="text-muted-foreground/40">, </span>
+        )}
+      </span>
+    ));
+
+  return (
+    <div className="space-y-1.5 border-l-2 border-blue-500/40 pl-3">
+      <p className="font-mono text-[10px] uppercase tracking-wider text-blue-400/80">
+        Region filter narrowed your search
+      </p>
+      <div className="space-y-0.5 text-[12px] leading-snug text-muted-foreground">
+        {info.dropped > 0 && (
+          <p>
+            <span className="text-rose-400/90">−{info.dropped}</span>{" "}
+            images removed this round
+            {negPhrases.length > 0 && (
+              <>
+                {" "}
+                <span className="text-muted-foreground/60">·</span>{" "}
+                <span className="text-muted-foreground/85">
+                  matched {renderPhrases(negPhrases)}
+                </span>
+              </>
+            )}
+          </p>
+        )}
+        {info.boosted > 0 && (
+          <p>
+            <span className="text-emerald-400/90">+{info.boosted}</span>{" "}
+            images boosted
+            {posPhrases.length > 0 && (
+              <>
+                {" "}
+                <span className="text-muted-foreground/60">·</span>{" "}
+                <span className="text-muted-foreground/85">
+                  matched {renderPhrases(posPhrases)}
+                </span>
+              </>
+            )}
+          </p>
+        )}
+        {(info.blacklist_size > 0 || info.boostlist_size > 0) && (
+          <p className="font-mono text-[10.5px] text-muted-foreground/60">
+            session totals: {info.blacklist_size.toLocaleString()} blacklisted ·{" "}
+            {info.boostlist_size.toLocaleString()} boosted ·{" "}
+            over-fetched {info.overfetch.toLocaleString()}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Rebuild the Visual Genome FAISS index (SigLIP + optional VG hybrid metadata).
 #
+# Thin wrapper around build_index.sh that first checks the VG data is present.
 # Run from repo root:  bash scripts/build_all_indexes.sh
-#
-# For MS-COCO (optional), place images under data/coco/val2014/ and run:
-#   bash scripts/build_index.sh coco
 
 set -euo pipefail
 
@@ -21,7 +19,7 @@ if [ ! -d "$DATA_ROOT/visual_genome" ]; then
   exit 1
 fi
 
-bash "$SCRIPT_DIR/build_index.sh" vg
+bash "$SCRIPT_DIR/build_index.sh"
 
 echo ""
 echo "Done."

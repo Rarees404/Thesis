@@ -13,6 +13,22 @@ logger = logging.getLogger(__name__)
 
 
 class RocchioUpdate:
+    """Classic Rocchio relevance-feedback update over (normalized) embeddings.
+
+        upd_q = alpha * q  +  beta * mean(relevant)  -  gamma * mean(irrelevant)
+
+    The three coefficients trade off how much the refined query keeps vs. moves:
+      - alpha (query inertia): how much of the current query is retained. High → stable.
+      - beta  (positive pull): how strongly the query moves toward relevant feedback.
+      - gamma (negative push): how strongly it moves away from irrelevant feedback.
+        Kept smaller than beta so a single "not this" click can't dominate.
+
+    Defaults here are conservative (0.8 / 0.1 / 0.1). The live retrieval service
+    instantiates this with 0.8 / 0.5 / 0.15 (see RetrievalServiceVisual.__init__),
+    and the dedicated user-text pass overrides them per-call (see retrieval_service).
+    Output is L2-normalized so it stays comparable under FAISS inner-product search.
+    """
+
     def __init__(self, alpha: float = 0.8, beta: float = 0.1, gamma: float = 0.1):
         self.alpha = alpha
         self.beta = beta
@@ -105,6 +121,7 @@ class ImageBasedVLMRelevanceFeedback(RelevanceFeedback):
         relevant_image_paths: List[str],
         annotator_json_boxes_list: Optional[List[Any]] = None,
         sam_annotations: Optional[List[Optional[Dict]]] = None,
+        image_labels: Optional[List[Optional[str]]] = None,
         top_k_feedback: int = 5,
     ):
         if not relevant_image_paths:
@@ -115,18 +132,63 @@ class ImageBasedVLMRelevanceFeedback(RelevanceFeedback):
             image = Image.open(image_path).convert("RGB")
             images.append(image)
 
-        if sam_annotations and any(a is not None for a in sam_annotations):
-            segments = self._extract_sam_segments(
-                images=images,
-                sam_annotations=sam_annotations,
-            )
-        else:
-            segments = self._extract_image_segments(
-                images=images,
-                annotator_json_boxes_list=annotator_json_boxes_list or [None] * len(images),
-            )
+        relevant_segments: List[Image.Image] = []
+        irrelevant_segments: List[Image.Image] = []
 
-        return segments
+        # 1) SAM masks (per-image; only items with masks contribute)
+        has_any_sam = bool(
+            sam_annotations and any(a is not None for a in sam_annotations)
+        )
+        if has_any_sam:
+            sam_result = self._extract_sam_segments(
+                images=images, sam_annotations=sam_annotations,
+            )
+            relevant_segments.extend(sam_result["relevant_segments"])
+            irrelevant_segments.extend(sam_result["irrelevant_segments"])
+
+        # 2) Bounding boxes (legacy annotator path; only when no SAM was given)
+        has_any_box = bool(
+            annotator_json_boxes_list
+            and any(b is not None and len(b) > 0 for b in annotator_json_boxes_list)
+        )
+        if has_any_box and not has_any_sam:
+            box_result = self._extract_image_segments(
+                images=images,
+                annotator_json_boxes_list=annotator_json_boxes_list,
+            )
+            relevant_segments.extend(box_result["relevant_segments"])
+            irrelevant_segments.extend(box_result["irrelevant_segments"])
+
+        # 3) Full-image labels — only for images with no SAM mask / no box on that index
+        if image_labels:
+            for i, lbl in enumerate(image_labels):
+                if lbl not in ("Relevant", "Irrelevant"):
+                    continue
+                has_sam_i = (
+                    sam_annotations
+                    and i < len(sam_annotations)
+                    and sam_annotations[i] is not None
+                    and sam_annotations[i].get("mask_rle")
+                )
+                has_box_i = (
+                    annotator_json_boxes_list
+                    and i < len(annotator_json_boxes_list)
+                    and annotator_json_boxes_list[i]
+                )
+                if has_sam_i or has_box_i:
+                    continue
+                full = images[i].resize(
+                    (self.img_size, self.img_size), Image.BICUBIC,
+                )
+                if lbl == "Relevant":
+                    relevant_segments.append(full)
+                else:
+                    irrelevant_segments.append(full)
+
+        return {
+            "relevant_segments": relevant_segments,
+            "irrelevant_segments": irrelevant_segments,
+        }
 
     def _extract_sam_segments(
         self,

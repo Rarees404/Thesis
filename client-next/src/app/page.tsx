@@ -93,6 +93,7 @@ export default function Home() {
       irrelevantCaptions,
       fuseInitialQuery,
       samAnnotations,
+      imageLabels,
       setIsApplyingFeedback,
       setFeedbackResults,
       setError,
@@ -120,6 +121,13 @@ export default function Home() {
 
       const hasSam = samList.some((s) => s !== null);
 
+      // Per-image full-image labels — only sent for images that don't have a SAM mask.
+      const labelsList = images.map((_, i) => {
+        if (samAnnotations.get(i)?.mask_rle) return null;
+        return imageLabels.get(i) ?? null;
+      });
+      const hasLabels = labelsList.some((l) => l !== null);
+
       const data = await applyFeedback({
         query,
         top_k: topK,
@@ -128,6 +136,7 @@ export default function Home() {
         irrelevant_captions: irrelevantCaptions,
         annotator_json_boxes_list: boxesList,
         ...(hasSam ? { sam_annotations: samList } : {}),
+        ...(hasLabels ? { image_labels: labelsList } : {}),
         fuse_initial_query: fuseInitialQuery,
         ...(sessionId ? { session_id: sessionId } : {}),
       });
@@ -139,7 +148,8 @@ export default function Home() {
           data.scores,
           data.preview_width ?? 224,
           data.preview_height ?? 224,
-          data.session_id
+          data.session_id,
+          data.hard_filter ?? null,
         );
       } else {
         setError(data.message || "Feedback failed");

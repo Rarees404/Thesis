@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, FlaskConical } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 
 interface HeaderProps {
@@ -61,6 +62,13 @@ export function Header({ activeTab, onTabChange }: HeaderProps) {
                 </button>
               );
             })}
+            <Link
+              href="/study"
+              className="inline-flex h-12 items-center gap-1.5 px-2.5 text-[13px] tracking-tight text-muted-foreground transition-colors duration-100 hover:text-foreground"
+            >
+              <FlaskConical className="h-3.5 w-3.5" />
+              Study
+            </Link>
           </nav>
         </div>
 
