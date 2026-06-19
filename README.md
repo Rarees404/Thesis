@@ -29,13 +29,14 @@ a "never show me this again" filter, and a modern web UI.
 4. [Prerequisites](#prerequisites)
 5. [First-time setup (step by step)](#first-time-setup-step-by-step)
 6. [Running the app](#running-the-app)
-7. [Using the app](#using-the-app)
-8. [Optional: hard-filtering index](#optional-hard-filtering-index)
-9. [Repository layout](#repository-layout)
-10. [Configuration reference](#configuration-reference)
-11. [HTTP API](#http-api)
-12. [Troubleshooting](#troubleshooting)
-13. [Citation & license](#citation--license)
+7. [Viewing the presentation (no backend needed)](#viewing-the-presentation-no-backend-needed)
+8. [Using the app](#using-the-app)
+9. [Optional: hard-filtering index](#optional-hard-filtering-index)
+10. [Repository layout](#repository-layout)
+11. [Configuration reference](#configuration-reference)
+12. [HTTP API](#http-api)
+13. [Troubleshooting](#troubleshooting)
+14. [Citation & license](#citation--license)
 
 ---
 
@@ -303,6 +304,35 @@ Stop everything with **Ctrl+C**. Logs are in `.logs/server.log` and
 `.logs/client.log`.
 
 To change ports: `SERVER_PORT=8002 CLIENT_PORT=3001 ./start.sh`.
+
+---
+
+## Viewing the presentation (no backend needed)
+
+The slide deck at `/present` is a self-contained Next.js page — it has no
+dependency on the Python server, SAM, or any GPU. Only Node.js is required.
+
+```bash
+cd client-next
+npm install          # first time only
+npm run dev
+```
+
+Then open **<http://localhost:3000/present>**.
+
+Navigate with:
+
+| Key | Action |
+|-----|--------|
+| Arrow Right / Space / PageDown | Next slide or next step |
+| Arrow Left / PageUp | Previous |
+| Home | First slide |
+| End | Last slide |
+| Click a dot (bottom bar) | Jump to any slide |
+| × (top right) | Exit to main app |
+
+> The main app at `http://localhost:3000` is also accessible but search will not
+> work without the backend running — that is expected.
 
 ---
 

@@ -1,0 +1,37 @@
+/* Presentation-only theme — scoped to the /present route, does not touch the app. */
+
+.present-root {
+  background-color: #0a0c12;
+}
+
+/* Layered gradient: cobalt glow top-right, dim glow bottom-left, vignette. */
+.present-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 55% at 86% -5%, rgba(72, 118, 255, 0.18), transparent 70%),
+    radial-gradient(55% 50% at -5% 105%, rgba(72, 118, 255, 0.09), transparent 70%),
+    radial-gradient(120% 120% at 50% 45%, transparent 52%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+/* Faint grid texture, masked to fade at the edges. */
+.present-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(circle at 50% 38%, #000 0%, transparent 78%);
+  mask-image: radial-gradient(circle at 50% 38%, #000 0%, transparent 78%);
+}
+
+/* Soft elevation used by content cards in the deck. */
+.present-card {
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 12px 40px -12px rgba(0, 0, 0, 0.6);
+}

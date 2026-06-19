@@ -205,7 +205,6 @@ results/
 server/sam3/
 
 # Local editor / tooling state
-.claude/
 .DS_Store
 **/.DS_Store
 .logs/

@@ -403,6 +403,18 @@ async def startup_event():
     )
     print(f"[startup] SAM backend: {sam_model_type} (requested: {settings.sam_backend})")
 
+    # Warm up SAM so the first real click doesn't pay the one-time MPS/CUDA
+    # kernel-compilation cost (which otherwise can exceed the request timeout on
+    # the user's first segmentation). Non-fatal if it fails.
+    if sam_segmenter is not None:
+        try:
+            _warm = PILImage.new("RGB", (256, 256), (127, 127, 127))
+            sam_segmenter.set_image(_warm)
+            sam_segmenter.segment_points([{"x": 128.0, "y": 128.0, "label": 1}])
+            print("[startup] SAM warmup complete")
+        except Exception as _werr:
+            print(f"[startup] SAM warmup skipped ({_werr})")
+
     global ollama_available
     if settings.ollama_enabled:
         ollama_available = check_ollama(settings.ollama_url, settings.ollama_model)
@@ -574,10 +586,10 @@ async def segment_image(request: SegmentRequest):
             try:
                 seg_resp, region_b64, bbox_orig = await asyncio.wait_for(
                     asyncio.to_thread(_run_segment),
-                    timeout=60.0,
+                    timeout=180.0,
                 )
             except asyncio.TimeoutError:
-                raise HTTPException(status_code=504, detail="Segmentation timed out (>60 s)")
+                raise HTTPException(status_code=504, detail="Segmentation timed out (>180 s)")
 
         # Fire background Ollama captioning immediately after segmentation completes —
         # by the time the user clicks "Apply Feedback" the caption is likely ready.
